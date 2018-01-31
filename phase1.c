@@ -99,6 +99,8 @@ void startup(int argc, char *argv[])
         USLOSS_Halt(1);
     }
 
+    dispatcher();
+    
     USLOSS_Console("startup(): Should not see this message! ");
     USLOSS_Console("Returned from fork1 call that created start1\n");
 
@@ -256,9 +258,13 @@ int fork1(char *name, int (*startFunc)(char *), char *arg,
     p1_fork(ProcTable[procSlot].pid);
 
     // More stuff to do here...call dispatcher
-    //dispatcher();
+ 
     
     dumpSlot(procSlot);
+   //  ReadyList;
+    
+    // current process ID
+    Current = &ProcTable[procSlot];
     
     return procSlot;
 } /* fork1 */
@@ -346,7 +352,18 @@ void dispatcher(void)
 {
     procPtr nextProcess = NULL;
 
-    p1_switch(Current->pid, nextProcess->pid);
+    if (Current->pid == 1)  // sentinel
+    {
+        USLOSS_Console("dispatcher() switching to sentinel\n");
+        USLOSS_ContextSwitch(NULL,&ProcTable[0].state);
+    }
+    else
+    {
+        USLOSS_Console("dispatcher() switching to %d\n", Current->pid);
+        USLOSS_ContextSwitch(&ProcTable[0].state, &ProcTable[Current->pid-1].state);
+    }
+    
+//   p1_switch(Current->pid, nextProcess->pid);
 } /* dispatcher */
 
 
@@ -398,4 +415,3 @@ void disableInterrupts()
 void dumpProcesses(){
     
 }
-
