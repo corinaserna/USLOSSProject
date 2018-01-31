@@ -5,6 +5,12 @@ typedef struct procStruct procStruct;
 
 typedef struct procStruct * procPtr;
 
+enum {
+	ePROC_READY, 
+	ePROC_BLOCKED, 
+	ePROC_QUIT
+};
+
 struct procStruct {
    procPtr         nextProcPtr;
    procPtr         childProcPtr;
