@@ -33,8 +33,8 @@ $(TARGET):	$(COBJS)
 
 $(TESTS):	$(TARGET) p1.o
 	$(CC) $(CFLAGS) -c $(TESTDIR)/$@.c
-	$(CC) $(LDFLAGS) -o $@ $@.o $(LIBS) p1.o
-
+	$(CC) $(LDFLAGS) -o $@ $@.o $(LIBS) p1.o 
+	
 clean:
 	rm -f $(COBJS) $(TARGET) p1.o test??.o test?? test??.txt core term*.out
 
