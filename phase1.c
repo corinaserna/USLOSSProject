@@ -64,6 +64,9 @@ void startup(int argc, char *argv[])
     if (DEBUG && debugflag)
         USLOSS_Console("startup(): initializing process table, ProcTable[]\n");
     memset(ProcTable, 0, sizeof(ProcTable));
+    
+    //Initialize the current variable
+    Current = NULL;
 
     // Initialize the Ready list, etc.
     if (DEBUG && debugflag)
@@ -242,6 +245,21 @@ int fork1(char *name, int (*startFunc)(char *), char *arg,
     
     ProcTable[procSlot].status          = ePROC_READY;
     //** figure out nextSiblingPtr, nextProcPtr
+    if(Current == NULL){
+        ProcTable[procSlot].parentProcPtr = NULL;
+    }
+    else{
+       ProcTable[procSlot].parentProcPtr = Current;
+       if(Current->childProcPtr == NULL){
+           Current->childProcPtr = &(ProcTable[procSlot]);
+       }
+       else{
+           ProcTable[procSlot].nextSiblingPtr = Current->childProcPtr;
+           Current->childProcPtr = &(ProcTable[procSlot]);
+           // finally setting that to address of process at procSlot
+       }
+    }
+    
   //  ProcTable[procSlot].nextSiblingPtr  = NULL;
  //   ProcTable[procSlot].nextProcPtr         = nextPid++;
    
@@ -264,7 +282,7 @@ int fork1(char *name, int (*startFunc)(char *), char *arg,
    //  ReadyList;
     
     // current process ID
-    Current = &ProcTable[procSlot];
+    //Current = &ProcTable[procSlot];
     
     return procSlot;
 } /* fork1 */
@@ -311,6 +329,12 @@ void launch()
    ------------------------------------------------------------------------ */
 int join(int *status)
 {
+    if(Current->childProcPtr->status != ePROC_QUIT){
+        Current->status = ePROC_BLOCKED;
+        // assuming the current process running is at the head of the ready list
+        ReadyList = ReadyList->nextProcPtr;
+        dispatcher();
+    }
     return -1;  // -1 is not correct! Here to prevent warning.
 } /* join */
 
@@ -326,6 +350,20 @@ int join(int *status)
    ------------------------------------------------------------------------ */
 void quit(int status)
 {
+    
+    if(Current->parentProcPtr->status == ePROC_BLOCKED){
+        Current->parentProcPtr->status = ePROC_READY;
+        // put it back on the ready list
+        Current->childQuitStatus = status; // return pid of this process AND the status argument from called
+        if(Current->parentProcPtr->quitChild == NULL){ // put child on parent's quit children list
+            Current->parentProcPtr->quitChild = &(Current);
+            Current->parentProcPtr->quitSibling = NULL;            
+        }
+        else{
+            Current->quitSibling = Current->parentProcPtr->quitChild;
+            Current->parentProcPtr->quitChild = &(Current);
+        }       
+    }
     p1_quit(Current->pid);
 } /* quit */
 

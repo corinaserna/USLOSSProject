@@ -1,5 +1,5 @@
 /* Patrick's DEBUG printing constant... */
-#define DEBUG 0
+#define DEBUG 1
 
 typedef struct procStruct procStruct;
 
@@ -24,7 +24,12 @@ struct procStruct {
    char           *stack;
    unsigned int    stackSize;
    int             status;        /* READY, BLOCKED, QUIT, etc. */
-   /* other fields as needed... */
+   /* other fields as needed... */ 
+   int             childQuitStatus;
+   procPtr         parentProcPtr;
+   procPtr         quitChild;
+   procPtr         quitSibling;
+   
 };
 
 struct psrBits {
