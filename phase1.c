@@ -63,6 +63,7 @@ void startup(int argc, char *argv[])
     /* initialize the process table */
     if (DEBUG && debugflag)
         USLOSS_Console("startup(): initializing process table, ProcTable[]\n");
+    memset(ProcTable, 0, sizeof(ProcTable));
 
     // Initialize the Ready list, etc.
     if (DEBUG && debugflag)
@@ -140,6 +141,20 @@ int firstAvailableProcSlot()
     return -1;
 }
 
+void dumpSlot(int tableSlot)
+{
+    USLOSS_Console("fork1(): -- (%d) Table for PID = %d\n", tableSlot, ProcTable[tableSlot].pid);
+    USLOSS_Console("            name      [%s]\n", ProcTable[tableSlot].name);
+    USLOSS_Console("            startArg  [%s]\n", ProcTable[tableSlot].startArg);
+    USLOSS_Console("            startFunc [%x]\n", ProcTable[tableSlot].startFunc);
+    USLOSS_Console("            stackSize [%d]\n", ProcTable[tableSlot].stackSize);
+    USLOSS_Console("            stack     [%x]\n", ProcTable[tableSlot].stack);
+    USLOSS_Console("            priority  [%d]\n", ProcTable[tableSlot].priority);
+    USLOSS_Console("            status    [%d]\n", ProcTable[tableSlot].status);
+    USLOSS_Console("            nextSiblingPtr [%x]\n", ProcTable[tableSlot].nextSiblingPtr);
+    USLOSS_Console("            nextProcPtr    [%x]\n", ProcTable[tableSlot].nextProcPtr);
+}
+
 /* ------------------------------------------------------------------------
    Name - fork1
    Purpose - Gets a new process from the process table and initializes
@@ -153,33 +168,31 @@ int firstAvailableProcSlot()
                   process information changed
    ------------------------------------------------------------------------ */
 int fork1(char *name, int (*startFunc)(char *), char *arg,
-          int stacksize, int priority)
+          int stackSize, int priority)
 {
-    int procSlot = -1;
-
     if (DEBUG && debugflag)
         USLOSS_Console("fork1(): creating process %s\n", name);
 
-    // test if in kernel mode; halt if in user mode
-    /* un.integerPart = USLOSS_PsrGet();
-    if ( un.integerPart != 1 ) {
-        USLOSS_Console("fork1(): Is in user mode.  Halting...\n");
-        USLOSS_Halt(1);
-    }*/
+    //test if in kernel mode; halt if in user mode
+    if(!(USLOSS_PSR_CURRENT_MODE & USLOSS_PsrGet()))
+    {
+        //throw some sort of error because it was not in kernel mode
+         USLOSS_Console("fork1(): Is in user mode.  Halting...\n");
+      	 USLOSS_Halt(1);
+    }
     
-
     // Return if stack size is too small
-    if (stacksize < USLOSS_MIN_STACK) {
-        USLOSS_Console("fork1(): stacksize < min %d\n", stacksize);
-        return -2;
+    if (stackSize < USLOSS_MIN_STACK) {
+        USLOSS_Console("fork1(): stacksize < min %d\n", stackSize);
+        return -1;
     }
     
     // check for min/max priroity
     if(strcmp(name, "sentinel") == 0){
         if(priority != 6){
             USLOSS_Console("fork1(): sentinel priority = %d and it must be 6\n", priority);
-            return -1;
-        }
+        return -1;
+    }
     }
     else if (priority > MINPRIORITY) {
         USLOSS_Console("fork1(): priority %d < min %d\n", priority, MINPRIORITY);
@@ -189,9 +202,9 @@ int fork1(char *name, int (*startFunc)(char *), char *arg,
         USLOSS_Console("fork1(): priority %d > max %d\n", priority, MAXPRIORITY);
         return -1;
     }
-
-    // Is there room in the process table? What is the next PID?
-    procSlot = firstAvailableProcSlot();
+    
+   // Is there room in the process table? What is the next PID?
+    int procSlot = firstAvailableProcSlot();
     
     if (procSlot == -1) {
         USLOSS_Console("fork1(): ProcTable full\n");
@@ -214,10 +227,10 @@ int fork1(char *name, int (*startFunc)(char *), char *arg,
     else
         strcpy(ProcTable[procSlot].startArg, arg);
     
-    ProcTable[procSlot].stackSize   = stacksize;
-    ProcTable[procSlot].stack       = calloc(stacksize, 1);   // create stack and init to 0
+    ProcTable[procSlot].stackSize   = stackSize;
+    ProcTable[procSlot].stack       = calloc(stackSize, 1);   // create stack and init to 0
     if (ProcTable[procSlot].stack == NULL)  { // memory issue
-        USLOSS_Console("fork1(): Couldn't get memory for stack (size = %d).  Halting...\n", stacksize);
+        USLOSS_Console("fork1(): Couldn't get memory for stack (size = %d).  Halting...\n", stackSize);
         USLOSS_Halt(1);
     }
 
@@ -225,8 +238,11 @@ int fork1(char *name, int (*startFunc)(char *), char *arg,
     ProcTable[procSlot].pid         = nextPid;
     nextPid++;
     
-    //** figure out status, nextSiblingPtr, nextProcPtr
-
+    ProcTable[procSlot].status          = ePROC_READY;
+    //** figure out nextSiblingPtr, nextProcPtr
+  //  ProcTable[procSlot].nextSiblingPtr  = NULL;
+ //   ProcTable[procSlot].nextProcPtr         = nextPid++;
+   
     // Initialize context for this process, but use launch function pointer for
     // the initial value of the process's program counter (PC)
 
@@ -241,8 +257,10 @@ int fork1(char *name, int (*startFunc)(char *), char *arg,
 
     // More stuff to do here...call dispatcher
     //dispatcher();
-
-    return procSlot;  // -1 is not correct! Here to prevent warning.
+    
+    dumpSlot(procSlot);
+    
+    return procSlot;
 } /* fork1 */
 
 /* ------------------------------------------------------------------------
@@ -312,7 +330,7 @@ void illegalInstructionHandler(int dev, void *arg)
 } /* illegalInstructionHandler */
 
 void clockHandler(int dev, void *arg){
-    
+
 }
 /* ------------------------------------------------------------------------
    Name - dispatcher
@@ -358,6 +376,7 @@ int sentinel (char *dummy)
 /* check to determine if deadlock has occurred... */
 static void checkDeadlock()
 {
+    
 } /* checkDeadlock */
 
 
@@ -379,3 +398,4 @@ void disableInterrupts()
 void dumpProcesses(){
     
 }
+
