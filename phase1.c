@@ -181,12 +181,12 @@ int fork1(char *name, int (*startFunc)(char *), char *arg,
             return -1;
         }
     }
-    else if (priority < MINPRIORITY) {
-        USLOSS_Console("fork1(): priority < min %d\n", priority);
+    else if (priority > MINPRIORITY) {
+        USLOSS_Console("fork1(): priority %d < min %d\n", priority, MINPRIORITY);
         return -1;
     }
-    else if (priority > MAXPRIORITY) {
-        USLOSS_Console("fork1(): priority > max %d\n", priority);
+    else if (priority < MAXPRIORITY) {
+        USLOSS_Console("fork1(): priority %d > max %d\n", priority, MAXPRIORITY);
         return -1;
     }
 
@@ -240,7 +240,7 @@ int fork1(char *name, int (*startFunc)(char *), char *arg,
     p1_fork(ProcTable[procSlot].pid);
 
     // More stuff to do here...call dispatcher
-    dispatcher();
+    //dispatcher();
 
     return procSlot;  // -1 is not correct! Here to prevent warning.
 } /* fork1 */
