@@ -3,15 +3,13 @@
 
    University of Arizona
    Computer Science 452
-   Fall 2015
-
+ 
    ------------------------------------------------------------------------ */
 
 #include "phase1.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-
 #include "kernel.h"
 
 /* ------------------------- Prototypes ----------------------------------- */
@@ -21,7 +19,7 @@ int sentinel (char *);
 void dispatcher(void);
 void launch();
 static void checkDeadlock();
-
+int isZapped();
 
 /* -------------------------- Globals ------------------------------------- */
 
@@ -46,8 +44,35 @@ procPtr Current;
 // the next pid to be assigned
 unsigned int nextPid = SENTINELPID;
 
-
+procPtr procesStack[1000];
+int processStackLoc = 0;
 /* -------------------------- Functions ----------------------------------- */
+// puts the highest priority at the top
+static int priorityCompare(const void * a, const void * b)
+{
+    
+    const procPtr a1 = *(const procPtr *)a;
+    const procPtr b1 = *(const procPtr *)b;
+   
+    return  (a1->priority - b1->priority);
+}
+
+void pushReadyList(procPtr newItem)
+{
+    procesStack[processStackLoc++] = newItem;
+    
+    // now sort based on prioirty (higher priority higher)
+    if (processStackLoc > 1 )
+    {
+       qsort(procesStack, processStackLoc, sizeof (procPtr), priorityCompare);
+   }
+}
+
+procPtr popReadyList()
+{
+    if (processStackLoc > 0) processStackLoc--; // always leave sentienel on stack (ready list)
+    return procesStack[0];
+}
 /* ------------------------------------------------------------------------
    Name - startup
    Purpose - Initializes process lists and clock interrupt vector.
@@ -64,10 +89,10 @@ void startup(int argc, char *argv[])
     if (DEBUG && debugflag)
         USLOSS_Console("startup(): initializing process table, ProcTable[]\n");
     memset(ProcTable, 0, sizeof(ProcTable));
-    
-    //Initialize the current variable
-    Current = NULL;
 
+//Initialize the current variable
+    Current = NULL; 
+    
     // Initialize the Ready list, etc.
     if (DEBUG && debugflag)
         USLOSS_Console("startup(): initializing the Ready list\n");
@@ -95,13 +120,16 @@ void startup(int argc, char *argv[])
     // start the test process
     if (DEBUG && debugflag)
         USLOSS_Console("startup(): calling fork1() for start1\n");
+    
     result = fork1("start1", start1, NULL, 2 * USLOSS_MIN_STACK, 1);
     if (result < 0) {
         USLOSS_Console("startup(): fork1 for start1 returned an error, ");
         USLOSS_Console("halting...\n");
         USLOSS_Halt(1);
     }
+    USLOSS_Console("startup() done fork1 for start1\n");
 
+    ProcTable[0].nextSiblingPtr = &ProcTable[1];    // setup sentinel's sibling
     dispatcher();
     
     USLOSS_Console("startup(): Should not see this message! ");
@@ -243,24 +271,7 @@ int fork1(char *name, int (*startFunc)(char *), char *arg,
     ProcTable[procSlot].pid         = nextPid;
     nextPid++;
     
-    ProcTable[procSlot].status          = ePROC_READY;
-    //** figure out nextSiblingPtr, nextProcPtr
-    if(Current == NULL){
-        ProcTable[procSlot].parentProcPtr = NULL;
-    }
-    else{
-       ProcTable[procSlot].parentProcPtr = Current;
-       if(Current->childProcPtr == NULL){
-           Current->childProcPtr = &(ProcTable[procSlot]);
-       }
-       else{
-           ProcTable[procSlot].nextSiblingPtr = Current->childProcPtr;
-           Current->childProcPtr = &(ProcTable[procSlot]);
-           // finally setting that to address of process at procSlot
-       }
-    }
-    
-  //  ProcTable[procSlot].nextSiblingPtr  = NULL;
+ //  ProcTable[procSlot].nextSiblingPtr  = NULL;
  //   ProcTable[procSlot].nextProcPtr         = nextPid++;
    
     // Initialize context for this process, but use launch function pointer for
@@ -279,10 +290,38 @@ int fork1(char *name, int (*startFunc)(char *), char *arg,
  
     
     dumpSlot(procSlot);
+    
+    // setup current process
+    procPtr thisProc = &ProcTable[procSlot];
+
+    ProcTable[procSlot].status          = ePROC_READY;
+    //** figure out nextSiblingPtr, nextProcPtr
+    pushReadyList(thisProc);
+    
+    if(Current == NULL){
+        thisProc->parentProcPtr = NULL;
+    }
+    else{
+        thisProc->parentProcPtr = Current;
+        if(Current->childProcPtr == NULL){
+            Current->childProcPtr = thisProc;
+        }
+        else{
+            thisProc->nextSiblingPtr    = Current->childProcPtr;
+            Current->childProcPtr       = thisProc;
+            // finally setting that to address of process at procSlot
+        }
+    }
+    if (Current) {
+        if (Current->childProcPtr) {    // if already has a child, link it in
+            thisProc->nextSiblingPtr = Current->childProcPtr;
+        }
+        Current->childProcPtr = thisProc;
+    }
    //  ReadyList;
     
     // current process ID
-    //Current = &ProcTable[procSlot];
+   // ********** Current = &ProcTable[procSlot];
     
     return procSlot;
 } /* fork1 */
@@ -336,6 +375,9 @@ int join(int *status)
         dispatcher();
     }
     return -1;  // -1 is not correct! Here to prevent warning.
+    /*if (isZapped()) {
+        return -1;
+    }*/
 } /* join */
 
 
@@ -356,12 +398,12 @@ void quit(int status)
         // put it back on the ready list
         Current->childQuitStatus = status; // return pid of this process AND the status argument from called
         if(Current->parentProcPtr->quitChild == NULL){ // put child on parent's quit children list
-            Current->parentProcPtr->quitChild = &(Current);
+            Current->parentProcPtr->quitChild = (Current);
             Current->parentProcPtr->quitSibling = NULL;            
         }
         else{
             Current->quitSibling = Current->parentProcPtr->quitChild;
-            Current->parentProcPtr->quitChild = &(Current);
+            Current->parentProcPtr->quitChild = (Current);
         }       
     }
     p1_quit(Current->pid);
@@ -388,18 +430,25 @@ void clockHandler(int dev, void *arg){
    ----------------------------------------------------------------------- */
 void dispatcher(void)
 {
-    procPtr nextProcess = NULL;
+    procPtr nextProcess             = popReadyList();
+    USLOSS_Context *curProcessState = Current ? &Current->state : NULL;
 
-    if (Current->pid == 1)  // sentinel
-    {
-        USLOSS_Console("dispatcher() switching to sentinel\n");
-        USLOSS_ContextSwitch(NULL,&ProcTable[0].state);
+    USLOSS_Console("dispatcher() switching from %x to %x\n", Current, nextProcess);
+    USLOSS_Console("dispatcher() switching from pid=%d to %d\n", Current ? Current->pid : -1, nextProcess->pid);
+    
+    Current = nextProcess;
+    USLOSS_ContextSwitch(curProcessState, &nextProcess->state);
+    
+   /* int zapi = 0;
+    procPtr currProc = Current->zapList[zapi];
+    while (currProc != NULL) {
+        currProc->status = READY;
+        add(currProc);
+        
+        zapi++;
+        currProc = Current->zapList[zapi];
     }
-    else
-    {
-        USLOSS_Console("dispatcher() switching to %d\n", Current->pid);
-        USLOSS_ContextSwitch(&ProcTable[0].state, &ProcTable[Current->pid-1].state);
-    }
+    Current->zapped = 0;*/
     
 //   p1_switch(Current->pid, nextProcess->pid);
 } /* dispatcher */
@@ -423,7 +472,7 @@ int sentinel (char *dummy)
     while (1)
     {
         checkDeadlock();
-        USLOSS_WaitInt();
+//        USLOSS_WaitInt();
     }
 } /* sentinel */
 
@@ -447,9 +496,11 @@ void disableInterrupts()
 } /* disableInterrupts */
 
 
+
 /*
  * Print table of data structure
  */
 void dumpProcesses(){
     
 }
+
