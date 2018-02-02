@@ -8,7 +8,8 @@ typedef struct procStruct * procPtr;
 enum {
 	ePROC_READY, 
 	ePROC_BLOCKED, 
-	ePROC_QUIT
+	ePROC_QUIT,
+    ePROC_RUNNING
 };
 
 struct procStruct {
@@ -26,9 +27,10 @@ struct procStruct {
    int             status;        /* READY, BLOCKED, QUIT, etc. */
    /* other fields as needed... */ 
    int             childQuitStatus;
+   short           childQuitPID;
+   int             childHasQuit;
    procPtr         parentProcPtr;
-   procPtr         quitChild;
-   procPtr         quitSibling;
+   int             zapped;
    
 };
 

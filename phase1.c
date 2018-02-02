@@ -20,6 +20,7 @@ void dispatcher(void);
 void launch();
 static void checkDeadlock();
 int isZapped();
+void cleanupChild(int);
 
 /* -------------------------- Globals ------------------------------------- */
 
@@ -43,6 +44,9 @@ procPtr Current;
 
 // the next pid to be assigned
 unsigned int nextPid = SENTINELPID;
+
+// empty struct to use for cleanup
+static const struct procStruct EmptyStruct;
 
 static procPtr ReadyList[1000];
 int ReadyListStackLoc = 0;
@@ -339,7 +343,7 @@ void launch()
     // Enable interrupts
     
     // Call the function passed to fork1, and capture its return value
-    Current->status = ePROC_Running;
+    Current->status = ePROC_RUNNING;
     result = Current->startFunc(Current->startArg);
     
     if (DEBUG && debugflag)
@@ -398,20 +402,40 @@ int join(int *status)
             blockReadyProcess(Current);
         
         // ** Current has been popped off the ready list, so no further action needs to happen here?
-        // assuming the current process running is at the head of the ready list
-        //        ReadyList = ReadyList->nextProcPtr;
+        dumpProcesses();
         dispatcher();
-        return Current->childProcPtr->pid;
+        dumpProcesses();
+        // clean up child
+        
+        Current->status = Current->childQuitStatus;
+        short returnPID = Current->childQuitPID;
+        cleanupChild(Current->childQuitPID);
+        return returnPID;
+       }
+       else if(Current->childHasQuit == 1){
+           Current->status = Current->childQuitStatus;
+           short returnPID = Current->childQuitPID;
+           cleanupChild(Current->childQuitPID);
+           return returnPID;
        }
     }
-    else
+    else if(isZapped()){
+        return -1;
+    }
+    else{
         return -2;
-    
-    return -1;
-   /*if (isZapped()) {
-     return -1;
-     }*/
+    }
 } /* join */
+
+void cleanupChild(int pid){
+    int i;
+    for (i = 0; i < MAXPROC; i++) {
+        if(ProcTable[i].pid == pid){
+            break;
+        }
+    }
+    ProcTable[i] = EmptyStruct;
+}
 
 
 /* ------------------------------------------------------------------------
@@ -425,26 +449,114 @@ int join(int *status)
  ------------------------------------------------------------------------ */
 void quit(int status)
 {
+    if(Current->childProcPtr != NULL){
+        // has no children, print error message, call halt(1)
+        USLOSS_Console("quit(): process has no child in quit/n");
+        USLOSS_Halt(1);
+    }
+    
+    Current->status = ePROC_QUIT;
+    Current->parentProcPtr->childHasQuit = 1;
     procPtr parent = Current->parentProcPtr;
+    parent->childQuitStatus = status; // return pid of this process AND the status argument from called
+    parent->childQuitPID = Current->pid;
+    
     if(parent != NULL) // could be NULL if sentinel or "start1" processes
     {
+        // removing myself from my parent's children list
+        procPtr firstChild = parent->childProcPtr;
+        procPtr prevChild = NULL;
+        if(firstChild->pid == Current->pid){
+                procPtr newNextSibling = firstChild->nextSiblingPtr;
+                parent->childProcPtr = firstChild->nextSiblingPtr;
+                parent->nextSiblingPtr = newNextSibling->nextSiblingPtr;
+        }
+        else{
+            while(1){
+                if(firstChild->pid == Current->pid){
+                    prevChild->nextSiblingPtr = firstChild->nextSiblingPtr;
+                    break;
+                }
+                prevChild = firstChild;
+                firstChild = firstChild->nextSiblingPtr;
+            }
+        }
+        
+        //
+        
+        
         if(parent->status == ePROC_BLOCKED){
             parent->status = ePROC_READY;
-            // put it back on the ready list
-            Current->childQuitStatus = status; // return pid of this process AND the status argument from called
-            if(parent->quitChild == NULL){ // put child on parent's quit children list
+            /*if(parent->quitChild == NULL){ // put child on parent's quit children list
                 parent->quitChild = (Current);
                 parent->quitSibling = NULL;
             }
             else{
                 Current->quitSibling = parent->quitChild;
                 parent->quitChild = (Current);
-            }
+            }*/
             pushReadyList(parent);
+        }
+        else{ // parent has not yet done a join
+            /*if(parent->quitChild == NULL){ // put child on parent's quit children list
+                parent->quitChild = (Current);
+                parent->quitSibling = NULL;
+            }
+            else{
+                Current->quitSibling = parent->quitChild;
+                parent->quitChild = (Current);
+            }*/
+            dispatcher();
+        }
+    }
+    else{
+        if(ProcTable[0].status != ePROC_QUIT){ // if sentinel process is in quit
+            // cleaning up process table
+            for(int i; i < MAXPROC; i++){
+                ProcTable[i] = EmptyStruct;
+            }
+        }
+        else{
+            USLOSS_Console("quit(): sentinel is not quitting");
+            USLOSS_Console("halting...\n");
+            USLOSS_Halt(1);
         }
     }
     p1_quit(Current->pid);
 } /* quit */
+
+int isZapped(){
+    if(Current->zapped == 1){
+        return 1;
+    }
+    else{
+        return 0;
+    }
+}
+
+int zap (int pid){
+    if(Current->pid == pid){
+        USLOSS_Console("zap(): trying to zap itself");
+        USLOSS_Halt(1);
+    }
+    
+    for(int i = 0; i < MAXPROC; i++){
+        if(ProcTable[i].pid == pid){
+            ProcTable[i].zapped == 1;
+            if(Current->zapped == 1){
+                return -1; // process was zapped while in zap
+            }
+            dispatcher();
+            return 0;
+        }
+    }
+    
+    //process did not exist
+    //print error message and halt
+    USLOSS_Console("zap(): process does not exit");
+    USLOSS_Halt(1);
+    
+}
 
 void illegalInstructionHandler(int dev, void *arg)
 {
@@ -538,6 +650,17 @@ void disableInterrupts()
  * Print table of data structure
  */
 void dumpProcesses(){
-    
+    for(int tableSlot = 0; tableSlot < MAXPROC; tableSlot++){
+        USLOSS_Console("fork1(): -- (%d) Table for PID = %d\n", tableSlot, ProcTable[tableSlot].pid);
+        USLOSS_Console("            name      [%s]\n", ProcTable[tableSlot].name);
+        USLOSS_Console("            startArg  [%s]\n", ProcTable[tableSlot].startArg);
+        USLOSS_Console("            startFunc [%x]\n", ProcTable[tableSlot].startFunc);
+        USLOSS_Console("            stackSize [%d]\n", ProcTable[tableSlot].stackSize);
+        USLOSS_Console("            stack     [%x]\n", ProcTable[tableSlot].stack);
+        USLOSS_Console("            priority  [%d]\n", ProcTable[tableSlot].priority);
+        USLOSS_Console("            status    [%d]\n", ProcTable[tableSlot].status);
+        USLOSS_Console("            nextSiblingPtr [%x]\n", ProcTable[tableSlot].nextSiblingPtr);
+        USLOSS_Console("            nextProcPtr    [%x]\n", ProcTable[tableSlot].nextProcPtr);
+    }
 }
 
