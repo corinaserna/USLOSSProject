@@ -1,355 +1,376 @@
 /* ------------------------------------------------------------------------
-   phase1.c
+   phase2.c
 
    University of Arizona
    Computer Science 452
-   Fall 2015
 
    ------------------------------------------------------------------------ */
 
-#include "phase1.h"
-#include <stdlib.h>
-#include <string.h>
+#include <usloss.h>
+#include <usyscall.h>
+#include <phase1.h>
+#include <phase2.h>
 #include <stdio.h>
+#include <stdlib.h>
 
-#include "kernel.h"
+#include <message.h>
 
 /* ------------------------- Prototypes ----------------------------------- */
-void illegalInstructionHandler(int dev, void *arg);
-
-int sentinel (char *);
-void dispatcher(void);
-void launch();
-static void checkDeadlock();
+int start1 (char *);
 
 
 /* -------------------------- Globals ------------------------------------- */
 
-// Patrick's debugging global variable...
-int debugflag = 1;
+int debugflag2 = 0;
 
-// Number of entries in the process table
-static int numProcEntries;
+// the mail boxes 
+mailbox MailBoxTable[MAXMBOX];
 
-// the process table
-procStruct ProcTable[MAXPROC];
+MailSlots gMailSlots;
+// also need array of mail slots, array of function ptrs to system call 
+// handlers, ...
 
-// Process lists
-static procPtr ReadyList;
 
-// current process ID
-procPtr Current;
-
-// the next pid to be assigned
-unsigned int nextPid = SENTINELPID;
 
 
 /* -------------------------- Functions ----------------------------------- */
 /* ------------------------------------------------------------------------
-   Name - startup
-   Purpose - Initializes process lists and clock interrupt vector.
-             Start up sentinel process and the test process.
-   Parameters - argc and argv passed in by USLOSS
-   Returns - nothing
-   Side Effects - lots, starts the whole thing
-   ----------------------------------------------------------------------- */
-void startup(int argc, char *argv[])
+ Name - setupMailSlot
+ Purpose - Returns the next available mailSlot, if one is avaialble
+  Returns - 0 = success
+            -2 = no more mail slots available
+ Side Effects - slotPtr is NULL if not found, or contains mailSlot with mailBoxID filled in
+ ----------------------------------------------------------------------- */
+int setupMailSlot(MailboxPtr mailPtr void *message, int messageSize)
 {
-    int result; /* value returned by call to fork1() */
-
-    /* initialize the process table */
-    if (DEBUG && debugflag)
-        USLOSS_Console("startup(): initializing process table, ProcTable[]\n");
-    memset(ProcTable, 0, sizeof(ProcTable);
-
-    // Initialize the Ready list, etc.
-    if (DEBUG && debugflag)
-        USLOSS_Console("startup(): initializing the Ready list\n");
-    ReadyList = NULL;
-
-    // Initialize the illegalInstruction interrupt handler
-    USLOSS_IntVec[USLOSS_ILLEGAL_INT] = illegalInstructionHandler;
-
-    // Initialize the clock interrupt handler
-
-    // startup a sentinel process
-    if (DEBUG && debugflag)
-        USLOSS_Console("startup(): calling fork1() for sentinel\n");
-    result = fork1("sentinel", sentinel, NULL, USLOSS_MIN_STACK,
-                    SENTINELPRIORITY);
-    if (result < 0) {
-        if (DEBUG && debugflag) {
-            USLOSS_Console("startup(): fork1 of sentinel returned error, ");
-            USLOSS_Console("halting...\n");
-        }
-        USLOSS_Halt(1);
-    }
-  
-    // start the test process
-    if (DEBUG && debugflag)
-        USLOSS_Console("startup(): calling fork1() for start1\n");
-    result = fork1("start1", start1, NULL, 2 * USLOSS_MIN_STACK, 1);
-    if (result < 0) {
-        USLOSS_Console("startup(): fork1 for start1 returned an error, ");
-        USLOSS_Console("halting...\n");
-        USLOSS_Halt(1);
-    }
-
-    USLOSS_Console("startup(): Should not see this message! ");
-    USLOSS_Console("Returned from fork1 call that created start1\n");
-
-    return;
-} /* startup */
-
-/* ------------------------------------------------------------------------
-   Name - finish
-   Purpose - Required by USLOSS
-   Parameters - none
-   Returns - nothing
-   Side Effects - none
-   ----------------------------------------------------------------------- */
-void finish(int argc, char *argv[])
-{
-    if (DEBUG && debugflag)
-        USLOSS_Console("in finish...\n");
-} /* finish */
-
-/* ------------------------------------------------------------------------
- Name       - firstAvailableProcSlot
- Purpose    - Returns the first available entry in ProcTable
- Returns    - -1 if full (nothing available)
-            >= 0   entry inProcTable to use
-
- ------------------------------------------------------------------------ */
-int firstAvailableProcSlot()
-{
-    if (numProcEntries >= MAXPROC-1) {
-        return -1;
-    }
-    int firstAvaialble = 0;
-    int (firstAvaialble = 0; firstAvaialble < MAXPROC; firstAvaialble++)
+    if (gMailSlots.numAtiveMailSlots == MAXSLOTS)   // no more global slots available
+        return -2;
+    
+    if (mailPtr->numActiveSlots == numMailSlots)   // no slots avaialble to use in mailbox
+         return -2;
+         
+    int slotID;
+    mailSlot theMailSlotPtr = &gMailSlots.mailSlots[0];
+    for (slotID = 0; slotID < gMailSlots.numAtiveMailSlots; slotID++)
     {
-        if (ProcTable[firstAvaialble].stackSize == 0) { // assume stacksize is 0 if unused
-            ++numProcEntries;
-            return firstAvaialble;
-       }
+        if (-1 == mailSlot->mBoxID)  // found empty
+            break;
+        mailSlot = &gMailSlots.mailSlots[slotID];
     }
+    mailSlot->mBoxID    = mailBoxID;
+    mailSlot->msgSize   = messageSize;
+    mailSlot->msg       = message;
+    ++gMailSlots.numAtiveMailSlots;
+    
+    // now add to mailbox
+    mailPtr-slotsForThisMailBox[mailPtr->numActiveSlots] = mailSlot;
+    mailPtr->numActiveSlots++;
+    
+    return 0;
+}
+
+// Initialze mailID's to -1 and 0 out everything else
+void initMail()
+{
+    memset(gMailSlots, -1, sizeof(gMailSlots));
+    gMailSlots.numAtiveMailSlots = 0;
+
+    memset(MailBoxTable, -1, sizeof(MailBoxTable));
+}
+
+void releaseMailSlot(slotPtr theMailSlot)
+{
+    free(mailSlot->msg);
+    memset(mailSlot, -1, sizeof(MailSlot));
+    --gMailSlots.numAtiveMailSlots;
+}
+
+/* -----------------------------
+ Conditionally send a message to a mailbox. Do not block the invoking process.
+ If there is no empty slot in the mailbox in which to place the message, the value -2 is returned. Also return -2 in the case that all the mailbox slots in the system are used and none are available to allocate for this message.
+ Return values:
+ -3: process has been zap’d.
+ -2: mailbox full, message not sent; or no slots available in the system. 
+ -1: illegal values given as arguments.
+ 0: message sent successfully.
+*/
+int MboxCondSend(int mailboxID, void *message, int messageSize)
+{
+    MailboxPtr mailBoxPtr = &MailBoxTable[mailboxID];
+    if (mbox_id < 0 || mbox_id >= MAXMBOX ||    // check for illegal indexes
+        -1 == mailBoxPtr->mboxID                // check for mailbox ID wasn't in use
+        
+        )
+        return -1;
+    
+    if ( isZapped() )
+        return -3;
+         
+    // Add message to mailSlot
+    int result = setupMailSlot(mailBoxPtr);
+    if (results != 0)   // should only be -2
+         return result;
+
+    // Now send?
+    return 0;
+}
+
+/* -----------------------------
+ Conditionally receive a message from a mailbox. Do not block the invoking process. If there is no message in the mailbox, the value -2 is returned.
+ Return values:
+ -3: process has been zap’d.
+ -2: no message available to receive.
+ -1: illegal values given as arguments; or, message sent is too large for receiver’s buffer (no data copied in this case).
+ >= 0: the size of the message received.
+ 
+*/
+int MboxCondReceive(int mailboxID, void *message, int maxMessageSize)
+{
+    MailboxPtr mailBoxPtr = &MailBoxTable[mailboxID];
+    if (mbox_id < 0 || mbox_id >= MAXMBOX ||    // check for illegal indexes
+        -1 == mailBoxPtr->mboxID)     // check for mailbox ID wasn't in use
+        return -1;
+    
+    if ( isZapped() )
+        return -3;
+    
+    if (0 == mailBoxPtr->numActiveSlots)  // no messages available to receive
+        return -2;
+    
+    slotPtr msg = mailBoxPtr->slotsForThisMailBox[0];
+    if (msg->msgSize > maxMessageSize)
+         return -1;
+         
+    doReceiveMessage(mailBoxPtr, message, maxMessageSize);
+    return 0;
+}
+/* ------------------------------------------------------------------------
+   Name - start1
+   Purpose - Initializes mailboxes and interrupt vector.
+             Start the phase2 test process.
+   Parameters - one, default arg passed by fork1, not used here.
+   Returns - one to indicate normal quit.
+   Side Effects - lots since it initializes the phase2 data structures.
+   ----------------------------------------------------------------------- */
+int start1(char *arg)
+{
+    int kidPid;
+    int status;
+
+    if (DEBUG2 && debugflag2)
+        USLOSS_Console("start1(): at beginning\n");
+
+    // Initialize the mail box table, slots, & other data structures.
+    initMail();
+
+    // Initialize USLOSS_IntVec and system call handlers,
+
+    // allocate mailboxes for interrupt handlers.  Etc... 
+
+    // Create a process for start2, then block on a join until start2 quits
+    if (DEBUG2 && debugflag2)
+        USLOSS_Console("start1(): fork'ing start2 process\n");
+    kidPid = fork1("start2", start2, NULL, 4 * USLOSS_MIN_STACK, 1);
+    if ( join(&status) != kidPid ) {
+        USLOSS_Console("start2(): join returned something other than ");
+        USLOSS_Console("start2's pid\n");
+    }
+
+    return 0;
+} /* start1 */
+
+// Returns -1 if not available mailbox found; else the index
+int findFirstAvailableMailboxAndInit(int slots, int slot_size)
+{
+    MailboxPtr mboxPtr = NULL;
+    int index = 0;
+    
+    do {
+        mboxPtr = &MailBoxTable[index];
+        if (-1 == mboxPtr->mboxID)
+        {
+            mboxPtr->mboxID                 = index;
+            mboxPtr->numMailSlots           = slots;
+            mboxPtr->maxMessageSize         = slot_size;
+            mboxPtr->numActiveSlots         = 0;
+            if (slots)  // create array of slotPtr, init to NULL
+            {
+                mboxPtr->slotsForThisMailBox = maloc(sizeof(slotPtr)*slots);
+                memset(mboxPtr->slotsForThisMailBox, 0, sizeof(slotPtr)*slots);
+            }
+            else
+                mboxPtr->slotsForThisMailBox = NULL;
+               
+            return index;
+        }
+        ++index;
+    } while (index < MAXMBOX);
+ 
+    // if here, mailbox is full
     return -1;
 }
 /* ------------------------------------------------------------------------
-   Name - fork1
-   Purpose - Gets a new process from the process table and initializes
-             information of the process.  Updates information in the
-             parent process to reflect this child process creation.
-   Parameters - the process procedure address, the size of the stack and
-                the priority to be assigned to the child process.
-   Returns - the process id of the created child or -1 if no child could
-             be created or if priority is not between max and min priority.
-   Side Effects - ReadyList is changed, ProcTable is changed, Current
-                  process information changed
-   ------------------------------------------------------------------------ */
-int fork1(char *name, int (*startFunc)(char *), char *arg,
-          int stacksize, int priority)
-{
-    if (DEBUG && debugflag)
-        USLOSS_Console("fork1(): creating process %s\n", name);
-
-     //** test if in kernel mode; halt if in user mode
-
-    // Return if stack size is too small
-    if (stacksize < USLOSS_MIN_STACK) {
-        USLOSS_Console("fork1(): stacksize < min %d\n", stacksize);
-        return -1;
-    }
-    
-    // check for min/max priroity
-    if (priority < MINPRIORITY) {
-        USLOSS_Console("fork1(): priority < min %d\n", priority);
-        return -1;
-    }
-    
-    if (priority > MAXPRIORITY) {
-        USLOSS_Console("fork1(): priority > max %d\n", priority);
-        return -1;
-    }
-    
-   // Is there room in the process table? What is the next PID?
-    int procSlot = firstAvailableProcSlot();
-    
-    if (procSlot == -1) {
-        USLOSS_Console("fork1(): ProcTable full\n");
-        return -1;
-    }
-
-
-    // fill-in entry in process table */
-    if ( strlen(name) >= (MAXNAME - 1) ) {
-        USLOSS_Console("fork1(): Process name is too long.  Halting...\n");
-        USLOSS_Halt(1);
-    }
-    strcpy(ProcTable[procSlot].name, name);
-    ProcTable[procSlot].startFunc = startFunc;
-    if ( arg == NULL )
-        ProcTable[procSlot].startArg[0] = '\0';
-    else if ( strlen(arg) >= (MAXARG - 1) ) {
-        USLOSS_Console("fork1(): argument too long.  Halting...\n");
-        USLOSS_Halt(1);
-    }
-    else
-        strcpy(ProcTable[procSlot].startArg, arg);
-    
-    ProcTable[procSlot].stackSize   = stackSize;
-    ProcTable[procSlot].stack       = calloc(stackSize, 1);   // create stack and init to 0
-    if (ProcTable[procSlot].stack == NULL)  { // memory issue
-        USLOSS_Console("fork1(): Couldn't get memory for statck (size = %d).  Halting...\n", stackSize);
-        USLOSS_Halt(1);
-    }
-
-    ProcTable[procSlot].priority    = priority;
-    ProcTable[procSlot].pid         = nextPid++;
-    
-    //** figure out status, nextSiblingPtr, nextProcPtr
-
-    // Initialize context for this process, but use launch function pointer for
-    // the initial value of the process's program counter (PC)
-
-    USLOSS_ContextInit(&(ProcTable[procSlot].state),
-                       ProcTable[procSlot].stack,
-                       ProcTable[procSlot].stackSize,
-                       NULL,
-                       launch);
-
-    // for future phase(s)
-    p1_fork(ProcTable[procSlot].pid);
-
-    //** More stuff to do here...
-    
-    
-    return procSlot;
-} /* fork1 */
-
-/* ------------------------------------------------------------------------
-   Name - launch
-   Purpose - Dummy function to enable interrupts and launch a given process
-             upon startup.
-   Parameters - none
-   Returns - nothing
-   Side Effects - enable interrupts
-   ------------------------------------------------------------------------ */
-void launch()
-{
-    int result;
-
-    if (DEBUG && debugflag)
-        USLOSS_Console("launch(): started\n");
-
-    // Enable interrupts
-
-    // Call the function passed to fork1, and capture its return value
-    result = Current->startFunc(Current->startArg);
-
-    if (DEBUG && debugflag)
-        USLOSS_Console("Process %d returned to launch\n", Current->pid);
-
-    quit(result);
-
-} /* launch */
-
-
-/* ------------------------------------------------------------------------
-   Name - join
-   Purpose - Wait for a child process (if one has been forked) to quit.  If 
-             one has already quit, don't wait.
-   Parameters - a pointer to an int where the termination code of the 
-                quitting process is to be stored.
-   Returns - the process id of the quitting child joined on.
-             -1 if the process was zapped in the join
-             -2 if the process has no children
-   Side Effects - If no child process has quit before join is called, the 
-                  parent is removed from the ready list and blocked.
-   ------------------------------------------------------------------------ */
-int join(int *status)
-{
-    return -1;  // -1 is not correct! Here to prevent warning.
-} /* join */
-
-
-/* ------------------------------------------------------------------------
-   Name - quit
-   Purpose - Stops the child process and notifies the parent of the death by
-             putting child quit info on the parents child completion code
-             list.
-   Parameters - the code to return to the grieving parent
-   Returns - nothing
-   Side Effects - changes the parent of pid child completion status list.
-   ------------------------------------------------------------------------ */
-void quit(int status)
-{
-    p1_quit(Current->pid);
-} /* quit */
-
-
-/* ------------------------------------------------------------------------
-   Name - dispatcher
-   Purpose - dispatches ready processes.  The process with the highest
-             priority (the first on the ready list) is scheduled to
-             run.  The old process is swapped out and the new process
-             swapped in.
-   Parameters - none
-   Returns - nothing
-   Side Effects - the context of the machine is changed
+   Name - MboxCreate
+   Purpose - gets a free mailbox from the table of mailboxes and initializes it 
+   Parameters - maximum number of slots in the mailbox and the max size of a msg
+                sent to the mailbox.
+   Returns - -1 to indicate that no mailbox was created, or a value >= 0 as the
+             mailbox id.
+   Side Effects - initializes one element of the mail box array. 
    ----------------------------------------------------------------------- */
-void dispatcher(void)
+int MboxCreate(int slots, int slot_size)
 {
-    procPtr nextProcess = NULL;
-
-    p1_switch(Current->pid, nextProcess->pid);
-} /* dispatcher */
-
-
-/* ------------------------------------------------------------------------
-   Name - sentinel
-   Purpose - The purpose of the sentinel routine is two-fold.  One
-             responsibility is to keep the system going when all other
-             processes are blocked.  The other is to detect and report
-             simple deadlock states.
-   Parameters - none
-   Returns - nothing
-   Side Effects -  if system is in deadlock, print appropriate error
-                   and halt.
-   ----------------------------------------------------------------------- */
-int sentinel (char *dummy)
-{
-    if (DEBUG && debugflag)
-        USLOSS_Console("sentinel(): called\n");
-    while (1)
+    /*
+     A mailbox can be created with zero slots. Zero-slot mailboxes require special handling. Such mailboxes are intended for synchronization between sender and receiver. Two cases:
+     a.) The sender will be blocked until a receiver collects the message; 
+        OR 
+     b.) the receiver will be blocked until a sender sends the message.     */
+    if (0 == slots)
     {
-        checkDeadlock();
-        USLOSS_WaitInt();
+        //** do blocking
     }
-} /* sentinel */
+    // if here, unblocked??
+    int mailBoxID = findFirstAvailableMailboxAndInit(slots, slot_size);
+    
+    return mailBoxID;
+} /* MboxCreate */
 
 
-/* check to determine if deadlock has occurred... */
-static void checkDeadlock()
+// Marks all mailslots as released and then marks this mailbox as released
+void doReleaseMailbox(MailboxPtr mBoxPtr)
 {
-} /* checkDeadlock */
+    // release the slots in teh mailbox
+    int i;
+    for (i = 0; i < mBoxPtr->numMailSlots; i++)
+        releaseMailSlot(mBoxPtr[i]);
+    
+    // release the mailbox
+    memset(&MailBoxTable[mbox_id], -1, sizeof(mailbox));
+}
 
-
-/*
- * Disables the interrupts.
- */
-void disableInterrupts()
+/*  ------------------------------------------------------------------------
+ Name - MboxRelease
+ Releases a previously created mailbox. Any process can release any mailbox.
+ The code for MboxRelease will need to devise a means of handling processes that are blocked on a mailbox being released. Essentially, each blocked process should return -3 from the send or receive that caused it to block. The process that called MboxRelease needs to unblock all the blocked processes. When each of these processes awake from the blockMe call inside send or receive, it will need to “notice” that the mailbox has been released...
+ Return values:
+ -3: process has been zap’d.
+ -1: the mailboxID is not a mailbox that is in use. 0: successful completion.
+ 
+  ------------------------------------------------------------------------*/
+int MboxRelease(int mbox_id)
 {
-    // turn the interrupts OFF iff we are in kernel mode
-    // if not in kernel mode, print an error message and
-    // halt USLOSS
+    if (mbox_id < 0 || mbox_id >= MAXMBOX ||    // check for illegal indexes
+        -1 == MailBoxTable[mbox_id].mboxID)     // check for mailbox ID wasn't in use
+        return -1;
+    
+    MailboxPtr mBoxPtr = &MailBoxTable[mbox_id];
+     // release the mailbox
+    mBoxPtr->mboxID = -2;      // mark mailbox as about to be released
+    
+    //** Handle any blocked on on this mailbox
+    
+    
+    // Mark the mailbox as released
+    doReleaseMailbox(mBoxPtr);
+   
+    if ( isZapped() )
+        return -3;
 
-} /* disableInterrupts */
+    // if here, everything completed correctly
+    return 0;
+} /* MboxRelease */
 
-
-void illegalInstructionHandler(int dev, void *arg)
+/* ------------------------------------------------------------------------
+   Name - MboxSend
+   Purpose - Put a message into a slot for the indicated mailbox.
+             Block the sending process if no slot available.
+   Parameters - mailbox id, pointer to data of msg, # of bytes in msg.
+   Returns - zero if successful, 
+            -1 if invalid args.
+   Side Effects - none.
+   ----------------------------------------------------------------------- */
+int MboxSend(int mbox_id, void *msg_ptr, int msg_size)
 {
-    if (DEBUG && debugflag)
-        USLOSS_Console("illegalInstructionHandler() called\n");
-} /* illegalInstructionHandler */
+    MailboxPtr mailBoxPtr = &MailBoxTable[mailboxID];
+    if (mbox_id < 0 || mbox_id >= MAXMBOX ||    // check for illegal indexes
+        -1 == mailBoxPtr->mboxID                // check for mailbox ID wasn't in use
+        
+        )
+        return -1;
+
+    return 0;
+} /* MboxSend */
+
+// Releases the mail slot and does the accounting for it
+// Treats the slots array as stack, so needs to move it "up"
+// No error checking done here -- if called, all assumed good
+void popMsgStackAndRelease(MailboxPtr mailPtr)
+{
+    slotPtr msgPtr = mailPtr->slotsForThisMailBox[0];
+    
+    // release slot
+    releaseMailSlot(msgPtr);
+    --mailPtr->numActiveSlots;
+    
+    int i = 0;
+    if (mailPtr->numActiveSlots > 0) // need to adjust "stack" up
+    {
+        for (i = 0; i < mailPtr->numActiveSlots; i++)
+            mailPtr->slotsForThisMailBox[i] = mailPtr->slotsForThisMailBox[i+1];
+    }
+    mailPtr->slotsForThisMailBox[i] = NULL;
+   
+}
+
+// Does the actual message copy and releases the mail slot
+// Always assumes that the top of the stack has the message (slot) to copy
+// No error checking done here -- if called, all assumed good
+void doReceiveMessage(MailboxPtr mailPtr, void *msg_ptr, int maxMessageSize)
+{
+    slotPtr msgPtr = mailPtr->slotsForThisMailBox[0];
+    int sizeOfMessage = (msgPtr->msgSize > maxMessageSize ? maxMessageSize : mBoxPtr->msgSize);
+    memcpy(msg_ptr, msgPtr->msg, sizeOfMessage);
+    
+    popMsgStackAndRelease(mailPtr);
+    
+}
+/* ------------------------------------------------------------------------
+   Name - MboxReceive
+   Purpose - Get a msg from a slot of the indicated mailbox.
+             Block the receiving process if no msg available.
+   Parameters - mailbox id, pointer to put data of msg, max # of bytes that
+                can be received.
+   Returns - actual size of msg if successful, -1 if invalid args.
+   Side Effects - none.
+   ----------------------------------------------------------------------- */
+int MboxReceive(int mbox_id, void *msg_ptr, int maxMessageSize)
+{
+    MailboxPtr mailBoxPtr = &MailBoxTable[mailboxID];
+    if (mbox_id < 0 || mbox_id >= MAXMBOX ||    // check for illegal indexes
+        -1 == mailBoxPtr->mboxID                // check for mailbox ID wasn't in use
+        
+        )
+        return -1;
+    //** Handle process order, etc
+    
+    // if here, ready to do the actual receive (copy) of the message
+    doReceiveMessage(mailPtr, msg_ptr, maxMessageSize);
+    return 0;
+} /* MboxReceive */
+
+/* ------------------------------------------------------------------------
+   Name - check_io
+   Purpose - Determine if there any processes blocked on any of the
+             interrupt mailboxes.
+   Returns - 1 if one (or more) processes are blocked; 0 otherwise
+   Side Effects - none.
+
+   Note: Do nothing with this function until you have successfully completed
+   work on the interrupt handlers and their associated mailboxes.
+   ------------------------------------------------------------------------ */
+int check_io(void)
+{
+    if (DEBUG2 && debugflag2)
+        USLOSS_Console("check_io(): called\n");
+    return 0;
+} /* check_io */
