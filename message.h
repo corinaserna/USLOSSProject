@@ -13,6 +13,7 @@ struct mailbox {
     int			numMailSlots;
     int			messageSize;
     int			numActiveSlots;
+    int         maxMessageSize;
     slotPtr		*slotsForThisMailBox;		// contains pointers to slots in use
 };
 
