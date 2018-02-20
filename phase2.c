@@ -78,7 +78,7 @@ int setupMailSlot(MailboxPtr mailPtr, void *message, int messageSize)
 // Initialze mailID's to -1 and 0 out everything else
 void initMail()
 {
-    memset(*gMailSlots, -1, sizeof(gMailSlots));
+    memset(&gMailSlots, -1, sizeof(gMailSlots));
     gMailSlots.numAtiveMailSlots = 0;
 
     memset(MailBoxTable, -1, sizeof(MailBoxTable));
@@ -86,8 +86,8 @@ void initMail()
 
 void releaseMailSlot(slotPtr theMailSlot)
 {
-    free(mailSlot->msg);
-    memset(mailSlot, -1, sizeof(MailSlot));
+    free(theMailSlot->msg);
+    memset(theMailSlot, -1, sizeof(theMailSlot));
     --gMailSlots.numAtiveMailSlots;
 }
 
@@ -102,19 +102,19 @@ void releaseMailSlot(slotPtr theMailSlot)
 */
 int MboxCondSend(int mailboxID, void *message, int messageSize)
 {
-    MailboxPtr mailBoxPtr = &MailBoxTable[mailboxID];
-    if (mbox_id < 0 || mbox_id >= MAXMBOX ||    // check for illegal indexes
-        -1 == mailBoxPtr->mboxID                // check for mailbox ID wasn't in use
+    if (mailboxID < 0 || mailboxID >= MAXMBOX    // check for illegal indexes
+        //  || -1 == mailBoxPtr->mboxID                // check for mailbox ID wasn't in use
         
         )
         return -1;
     
     if ( isZapped() )
         return -3;
-         
+    MailboxPtr mailBoxPtr;
+    mailBoxPtr = &MailBoxTable[mailboxID];
     // Add message to mailSlot
-    int result = setupMailSlot(mailBoxPtr);
-    if (results != 0)   // should only be -2
+    int result = setupMailSlot(mailBoxPtr, message, messageSize);
+    if (result != 0)   // should only be -2
          return result;
 
     // Now send?
@@ -133,8 +133,9 @@ int MboxCondSend(int mailboxID, void *message, int messageSize)
 int MboxCondReceive(int mailboxID, void *message, int maxMessageSize)
 {
     MailboxPtr mailBoxPtr = &MailBoxTable[mailboxID];
-    if (mbox_id < 0 || mbox_id >= MAXMBOX ||    // check for illegal indexes
-        -1 == mailBoxPtr->mboxID)     // check for mailbox ID wasn't in use
+    if (mailboxID < 0 || mailboxID >= MAXMBOX  // check for illegal indexes
+        // || -1 == mailBoxPtr->mboxID   // check for mailbox ID wasn't in use
+        )
         return -1;
     
     if ( isZapped() )
@@ -201,7 +202,7 @@ int findFirstAvailableMailboxAndInit(int slots, int slot_size)
             mboxPtr->numActiveSlots         = 0;
             if (slots)  // create array of slotPtr, init to NULL
             {
-                mboxPtr->slotsForThisMailBox = maloc(sizeof(slotPtr)*slots);
+                mboxPtr->slotsForThisMailBox = malloc(sizeof(slotPtr)*slots);
                 memset(mboxPtr->slotsForThisMailBox, 0, sizeof(slotPtr)*slots);
             }
             else
@@ -248,10 +249,10 @@ void doReleaseMailbox(MailboxPtr mBoxPtr)
     // release the slots in teh mailbox
     int i;
     for (i = 0; i < mBoxPtr->numMailSlots; i++)
-        releaseMailSlot(mBoxPtr[i]);
+        releaseMailSlot(mBoxPtr->slotsForThisMailBox[i]);
     
     // release the mailbox
-    memset(&MailBoxTable[mbox_id], -1, sizeof(mailbox));
+    memset(&MailBoxTable[mBoxPtr->mboxID], -1, sizeof(mBoxPtr));
 }
 
 /*  ------------------------------------------------------------------------
@@ -297,8 +298,8 @@ int MboxRelease(int mbox_id)
    ----------------------------------------------------------------------- */
 int MboxSend(int mbox_id, void *msg_ptr, int msg_size)
 {
-    if (mbox_id < 0 || mbox_id >= MAXMBOX ||    // check for illegal indexes
-        -1 == mailBoxPtr->mboxID                // check for mailbox ID wasn't in use
+    if (mbox_id < 0 || mbox_id >= MAXMBOX    // check for illegal indexes
+        // || -1 == mailBoxPtr->mboxID                // check for mailbox ID wasn't in use
         
         )
         return -1;
@@ -335,7 +336,7 @@ void popMsgStackAndRelease(MailboxPtr mailPtr)
 void doReceiveMessage(MailboxPtr mailPtr, void *msg_ptr, int maxMessageSize)
 {
     slotPtr msgPtr = mailPtr->slotsForThisMailBox[0];
-    int sizeOfMessage = (msgPtr->msgSize > maxMessageSize ? maxMessageSize : mailPtr->msgSize);
+    int sizeOfMessage = (msgPtr->msgSize > maxMessageSize ? maxMessageSize : mailPtr->messageSize);
     memcpy(msg_ptr, msgPtr->msg, sizeOfMessage);
     
     popMsgStackAndRelease(mailPtr);
@@ -352,8 +353,8 @@ void doReceiveMessage(MailboxPtr mailPtr, void *msg_ptr, int maxMessageSize)
    ----------------------------------------------------------------------- */
 int MboxReceive(int mbox_id, void *msg_ptr, int maxMessageSize)
 {
-    if (mbox_id < 0 || mbox_id >= MAXMBOX ||    // check for illegal indexes
-        -1 == mailBoxPtr->mboxID                // check for mailbox ID wasn't in use
+    if (mbox_id < 0 || mbox_id >= MAXMBOX   // check for illegal indexes
+       // || -1 == mailBoxPtr->mboxID                // check for mailbox ID wasn't in use
         
         )
         return -1;
@@ -362,7 +363,7 @@ int MboxReceive(int mbox_id, void *msg_ptr, int maxMessageSize)
     //** Handle process order, etc
     
     // if here, ready to do the actual receive (copy) of the message
-    doReceiveMessage(mailPtr, msg_ptr, maxMessageSize);
+    doReceiveMessage(&MailBoxTable[mbox_id], msg_ptr, maxMessageSize);
     return 0;
 } /* MboxReceive */
 
