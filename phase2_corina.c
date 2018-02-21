@@ -77,9 +77,10 @@ void initMail(){
     for(i = 0; i < MAXMBOX; i++){
         MailBoxTable[i].mboxID = -1;
         //MailBoxTable[i].mboxTableIndex = -1;
-        MailBoxTable[i].totalMailSlots = -1;
+        MailBoxTable[i].totalMailSlots  = -1;
         MailBoxTable[i].activeMailSlots = -1;
-        MailBoxTable[i].maxMessageSize = -1;
+        MailBoxTable[i].maxMessageSize  = -1;
+        MailBoxTable[i].blockedPID      = -1;
         //MailBoxTable[i].mailSlotTable
     }
     
@@ -202,19 +203,24 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size){
               // Check that the message size would fit into this mailbox slot
                 if(msg_size < MailBoxTable[mbox_id].maxMessageSize){
                     // Create new mailslot
-                    Mailslot newSlot;
-                    newSlot.mboxID = mbox_id;
-                    newSlot.totalSlotTableIndex = slotsTableIndex;
-                    newSlot.mailSlotTableIndex  = mailboxSlotIndex;
-                    newSlot.msgSize             = msg_size;
-/*  free this */    newSlot.msg                 = malloc(msg_size);
-                    memcpy(newSlot.msg, msg_ptr, msg_size);
+                    Mailslot *newSlot           = (Mailslot *)&MailBoxTable[mbox_id].mailSlotTable[mailboxSlotIndex];
+                    newSlot->mboxID             = mbox_id;
+                    newSlot->totalSlotTableIndex = slotsTableIndex;
+                    newSlot->mailSlotTableIndex  = mailboxSlotIndex;
+                    newSlot->msgSize             = msg_size;
+/*  free this */    newSlot->msg                 = malloc(msg_size);
+                    memcpy(newSlot->msg, msg_ptr, msg_size);
                     
-                    // Insert into both tables
-                    MailBoxTable[mbox_id].mailSlotTable[mailboxSlotIndex] = newSlot;
-                    MailslotTable[slotsTableIndex] = newSlot;
+                    // Copy to other table
+                    memcpy(&MailslotTable[slotsTableIndex], newSlot, sizeof(Mailslot));
                     MailBoxTable[mbox_id].activeMailSlots++;
                     totalActiveMailSlots++;
+                    
+                    // now that there's a message in the mailbox, check to see if there's any processs blocked on it
+                    if (MailBoxTable[mbox_id].blockedPID != -1)
+                    {
+                        unblockProc(MailBoxTable[mbox_id].blockedPID);
+                    }
                     return 0;
                 }
                 
@@ -249,47 +255,59 @@ int MboxReceive(int mbox_id, void *msg_ptr, int max_msg_size){
     // Check that there is a message in the mailbox
     if(MailBoxTable[mbox_id].mailSlotTable[0].mboxID == - 1){
         USLOSS_Console("MboxReceive(%d): no message in mailslot\n", mbox_id);
+        MailBoxTable[mbox_id].blockedPID = getpid();
+        USLOSS_Console("MboxReceive(%d): blocking on pid %d\n", mbox_id, MailBoxTable[mbox_id].blockedPID);
+        blockMe(11);
+        
+        // done blocking, reset blocked id
+ //** Should allow more than one process to block on a mailbox? If so
+//** blockedPID should be a stack that is push and popped
+       MailBoxTable[mbox_id].blockedPID = -1;
        //** Block process
     }
-    else{
-        // Check that the message is not larger than max parameter
-        if(MailBoxTable[mbox_id].mailSlotTable[0].msgSize < max_msg_size){
-            // Copy into message pointer parameter
-            memcpy(msg_ptr, MailBoxTable[mbox_id].mailSlotTable[0].msg, MailBoxTable[mbox_id].mailSlotTable[0].msgSize);
-            
-            // Free the mail slot in both tables
-            int slotTableIndex;
-            int mailboxSlotIndex;
-            
-            slotTableIndex = MailBoxTable[mbox_id].mailSlotTable[0].totalSlotTableIndex;
-            mailboxSlotIndex = MailBoxTable[mbox_id].mailSlotTable[0].mailSlotTableIndex;
-            
-            // Adjust the mailboxSlotTable
-            int index1 = 0;
-            for(int i = 1; i < MailBoxTable[mbox_id].activeMailSlots; i++){
-                MailBoxTable[mbox_id].mailSlotTable[index1] = MailBoxTable[mbox_id].mailSlotTable[i];
-                index1++;
-            }
-            MailBoxTable[mbox_id].mailSlotTable[index1].mboxID = -1;
-            //memset(MailBoxTable[mbox_id].mailSlotTable[index1], -1, sizeof(Mailslot));
-            MailBoxTable[mbox_id].activeMailSlots--;
-            
-            // Adjust the main SlotTable
-            int index2 = slotTableIndex;
-            for(int j = index2 + 1; j < totalActiveMailSlots; j++){
-                MailslotTable[index2] = MailslotTable[j];
-                index2++;
-            }
-            MailslotTable[index2].mboxID = -1;
-            //memset(MailslotTable[index2], -1, sizeof(Mailslot));
-            totalActiveMailSlots--;
-            
-            // Return size of message
-            return MailBoxTable[mbox_id].mailSlotTable[0].msgSize;
-        }
-    }
     
-    return -1;
+//** Need to check that we were unblocked because the mailbox was released
+
+    // if here, we have a message in the mailbox slot
+    // Check that the message is not larger than max parameter
+    if(MailBoxTable[mbox_id].mailSlotTable[0].msgSize < max_msg_size){
+        // Copy into message pointer parameter
+        memcpy(msg_ptr, MailBoxTable[mbox_id].mailSlotTable[0].msg, MailBoxTable[mbox_id].mailSlotTable[0].msgSize);
+        
+        // Free the mail slot in both tables
+        int slotTableIndex;
+        int mailboxSlotIndex;
+        
+        slotTableIndex = MailBoxTable[mbox_id].mailSlotTable[0].totalSlotTableIndex;
+        mailboxSlotIndex = MailBoxTable[mbox_id].mailSlotTable[0].mailSlotTableIndex;
+        
+        // Adjust the mailboxSlotTable
+        int index1 = 0;
+        for(int i = 1; i < MailBoxTable[mbox_id].activeMailSlots; i++){
+            MailBoxTable[mbox_id].mailSlotTable[index1] = MailBoxTable[mbox_id].mailSlotTable[i];
+            index1++;
+        }
+        MailBoxTable[mbox_id].mailSlotTable[index1].mboxID = -1;
+        //memset(MailBoxTable[mbox_id].mailSlotTable[index1], -1, sizeof(Mailslot));
+        MailBoxTable[mbox_id].activeMailSlots--;
+        
+        // Adjust the main SlotTable
+        int index2 = slotTableIndex;
+        for(int j = index2 + 1; j < totalActiveMailSlots; j++){
+            MailslotTable[index2] = MailslotTable[j];
+            index2++;
+        }
+        MailslotTable[index2].mboxID = -1;
+        //memset(MailslotTable[index2], -1, sizeof(Mailslot));
+        totalActiveMailSlots--;
+        
+        // Return size of message
+        return MailBoxTable[mbox_id].mailSlotTable[0].msgSize;
+    }
+    else {  // return -1 for message too large
+        USLOSS_Console("MboxReceive(%d): message too large: %d > %d\n", mbox_id, MailBoxTable[mbox_id].mailSlotTable[0].msgSize, max_msg_size);
+        return -1;
+    }
 } /* MboxReceive */
 
 /* ------------------------------------------------------------------------
