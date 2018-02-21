@@ -1,10 +1,8 @@
 /* ------------------------------------------------------------------------
-   phase2.c
-
-   University of Arizona
-   Computer Science 452
-
-   ------------------------------------------------------------------------ */
+ phase2.c
+ University of Arizona
+ Computer Science 452
+ ------------------------------------------------------------------------ */
 
 #include <usloss.h>
 #include <usyscall.h>
@@ -12,8 +10,8 @@
 #include <phase2.h>
 #include <stdio.h>
 #include <stdlib.h>
-
 #include <message.h>
+#include <string.h>
 
 /* ------------------------- Prototypes ----------------------------------- */
 int start1 (char *);
@@ -23,42 +21,42 @@ int start1 (char *);
 
 int debugflag2 = 0;
 
-// the mail boxes 
+// the mail boxes
 Mailbox MailBoxTable[MAXMBOX];
 
-// also need array of mail slots, array of function ptrs to system call 
+// also need array of mail slots, array of function ptrs to system call
 // handlers, ...
 Mailslot MailslotTable[MAXSLOTS];
 int totalActiveMailSlots;
 
-
-
+void initMail();
+int findFirstAvailableMailboxAndInit(int numSlots, int slot_size);
 
 /* -------------------------- Functions ----------------------------------- */
 
 /* ------------------------------------------------------------------------
-   Name - start1
-   Purpose - Initializes mailboxes and interrupt vector.
-             Start the phase2 test process.
-   Parameters - one, default arg passed by fork1, not used here.
-   Returns - one to indicate normal quit.
-   Side Effects - lots since it initializes the phase2 data structures.
-   ----------------------------------------------------------------------- */
+ Name - start1
+ Purpose - Initializes mailboxes and interrupt vector.
+ Start the phase2 test process.
+ Parameters - one, default arg passed by fork1, not used here.
+ Returns - one to indicate normal quit.
+ Side Effects - lots since it initializes the phase2 data structures.
+ ----------------------------------------------------------------------- */
 int start1(char *arg)
 {
     int kidPid;
     int status;
-
+    
     if (DEBUG2 && debugflag2)
         USLOSS_Console("start1(): at beginning\n");
-
+    
     // Initialize the mail box table, slots, & other data structures.
     initMail();
     
     // Initialize USLOSS_IntVec and system call handlers,
-
-    // allocate mailboxes for interrupt handlers.  Etc... 
-
+    
+    // allocate mailboxes for interrupt handlers.  Etc...
+    
     // Create a process for start2, then block on a join until start2 quits
     if (DEBUG2 && debugflag2)
         USLOSS_Console("start1(): fork'ing start2 process\n");
@@ -67,14 +65,14 @@ int start1(char *arg)
         USLOSS_Console("start2(): join returned something other than ");
         USLOSS_Console("start2's pid\n");
     }
-
+    
     return 0;
 } /* start1 */
 
 
 // Helper Function
 void initMail(){
-    memset(MailBoxTable, -1, sizeof(Mailbox));    
+    memset(MailBoxTable, -1, sizeof(Mailbox));
     int i;
     for(i = 0; i < MAXMBOX; i++){
         MailBoxTable[i].mboxID = -1;
@@ -85,35 +83,35 @@ void initMail(){
         //MailBoxTable[i].mailSlotTable
     }
     
-    memset(MailslotTable, -1, sizeof(Mailslot));    
+    memset(MailslotTable, -1, sizeof(Mailslot));
     /*
-    memset(MailSlotTable, -1, sizeof(Mailslot));
-    int j;
-    for(j = 0; j < MAXMSLOT; j++){
-        MailSlotTable[j].mboxID = -1;
-        MailSlotTable[j].mSlotTableIndex = -1;
-        MailSlotTable[j].status = -1;
-        MailSlotTable[j].msgSize = -1;
-        //MailslotTable[j].msg
-    }*/
+     memset(MailSlotTable, -1, sizeof(Mailslot));
+     int j;
+     for(j = 0; j < MAXMSLOT; j++){
+     MailSlotTable[j].mboxID = -1;
+     MailSlotTable[j].mSlotTableIndex = -1;
+     MailSlotTable[j].status = -1;
+     MailSlotTable[j].msgSize = -1;
+     //MailslotTable[j].msg
+     }*/
 }
 
 
 /* ------------------------------------------------------------------------
-   Name - MboxCreate
-   Purpose - gets a free mailbox from the table of mailboxes and initializes it 
-   Parameters - maximum number of slots in the mailbox and the max size of a msg
-                sent to the mailbox.
-   Returns - -1 to indicate that no mailbox was created, or a value >= 0 as the
-             mailbox id.
-   Side Effects - initializes one element of the mail box array. 
-   ----------------------------------------------------------------------- */
+ Name - MboxCreate
+ Purpose - gets a free mailbox from the table of mailboxes and initializes it
+ Parameters - maximum number of slots in the mailbox and the max size of a msg
+ sent to the mailbox.
+ Returns - -1 to indicate that no mailbox was created, or a value >= 0 as the
+ mailbox id.
+ Side Effects - initializes one element of the mail box array.
+ ----------------------------------------------------------------------- */
 int MboxCreate(int slots, int slot_size)
 {
     /*
      A mailbox can be created with zero slots. Zero-slot mailboxes require special handling. Such mailboxes are intended for synchronization between sender and receiver. Two cases:
-     a.) The sender will be blocked until a receiver collects the message; 
-        OR 
+     a.) The sender will be blocked until a receiver collects the message;
+     OR
      b.) the receiver will be blocked until a sender sends the message.     */
     if (slots == 0){
         //** do blocking
@@ -143,7 +141,7 @@ int findFirstAvailableMailboxAndInit(int numSlots, int slot_size){
                 memset(MailBoxTable[index].mailSlotTable, -1, sizeof(Mailslot)*numSlots);
             }
             else{
-               MailBoxTable[index].mailSlotTable = malloc(sizeof(Mailslot)*numSlots); 
+                MailBoxTable[index].mailSlotTable = malloc(sizeof(Mailslot)*numSlots);
             }
             return index;
         }
@@ -154,36 +152,42 @@ int findFirstAvailableMailboxAndInit(int numSlots, int slot_size){
 
 
 /* ------------------------------------------------------------------------
-   Name - MboxSend
-   Purpose - Put a message into a slot for the indicated mailbox.
-             Block the sending process if no slot available.
-   Parameters - mailbox id, pointer to data of msg, # of bytes in msg.
-   Returns - zero if successful, -1 if invalid args.
-   Side Effects - none.
-   ----------------------------------------------------------------------- */
+ Name - MboxSend
+ Purpose - Put a message into a slot for the indicated mailbox.
+ Block the sending process if no slot available.
+ Parameters - mailbox id, pointer to data of msg, # of bytes in msg.
+ Returns - zero if successful, -1 if invalid args.
+ Side Effects - none.
+ ----------------------------------------------------------------------- */
 int MboxSend(int mbox_id, void *msg_ptr, int msg_size){
     // Checking for possible errors: inactive mailbox id, message size too large, etc.
     if(mbox_id < 0 || mbox_id >= MAXMBOX){
+        USLOSS_Console("MboxSend(): bad message #: %d\n", mbox_id);
+
         return -1;
     }
     if(MailBoxTable[mbox_id].mboxID == -1){
-        return -1;
+        USLOSS_Console("MboxSend(): message mailbox (%d) isn't valid\n", mbox_id);
+      return -1;
     }
     if(msg_size > MAX_MESSAGE){
-        return -1;
+        USLOSS_Console("MboxSend(): message size (%d) too large (%d)\n", msg_size, MAX_MESSAGE);
+       return -1;
     }
     
     // A mailbox does exist, now check if there are mailslots
     if(MailBoxTable[mbox_id].totalMailSlots > 0){
-        // Check if there is an available mail slot 
+        // Check if there is an available mail slot
         if((MailBoxTable[mbox_id].totalMailSlots - MailBoxTable[mbox_id].activeMailSlots) > 0){
             // Check that there are enough spaces in the overall mailslots table
             if(totalActiveMailSlots < MAXSLOTS){
-                // Find slot available in the mailslots table
+//                USLOSS_Console("MboxSend(%d): finding slots\n", mbox_id);
+              // Find slot available in the mailslots table
                 int slotsTableIndex;
                 for(int i = 0; i < MAXSLOTS; i++){
                     if(MailslotTable[i].mboxID == -1){
                         slotsTableIndex = i;
+                        break;
                     }
                 }
                 // Find slot available in the mailbox's own slots table
@@ -191,17 +195,20 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size){
                 for(int i = 0; i < MailBoxTable[mbox_id].totalMailSlots; i++){
                     if(MailBoxTable[mbox_id].mailSlotTable[i].mboxID == -1){
                         mailboxSlotIndex = i;
+                        break;
                     }
                 }
-                // Check that the message size would fit into this mailbox slot
+//                USLOSS_Console("MboxSend(%d): slotsTableIndex:%d slotsTableIndex:%d\n", mbox_id, slotsTableIndex, slotsTableIndex);
+              // Check that the message size would fit into this mailbox slot
                 if(msg_size < MailBoxTable[mbox_id].maxMessageSize){
                     // Create new mailslot
                     Mailslot newSlot;
                     newSlot.mboxID = mbox_id;
                     newSlot.totalSlotTableIndex = slotsTableIndex;
-                    newSlot.mailSlotTableIndex = mailboxSlotIndex;
-                    newSlot.msgSize = msg_size;
-                    memcpy(newSlot.msg, msg_ptr, sizeof(msg_ptr));
+                    newSlot.mailSlotTableIndex  = mailboxSlotIndex;
+                    newSlot.msgSize             = msg_size;
+/*  free this */    newSlot.msg                 = malloc(msg_size);
+                    memcpy(newSlot.msg, msg_ptr, msg_size);
                     
                     // Insert into both tables
                     MailBoxTable[mbox_id].mailSlotTable[mailboxSlotIndex] = newSlot;
@@ -220,26 +227,29 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size){
 
 
 /* ------------------------------------------------------------------------
-   Name - MboxReceive
-   Purpose - Get a msg from a slot of the indicated mailbox.
-             Block the receiving process if no msg available.
-   Parameters - mailbox id, pointer to put data of msg, max # of bytes that
-                can be received.
-   Returns - actual size of msg if successful, -1 if invalid args.
-   Side Effects - none.
-   ----------------------------------------------------------------------- */
+ Name - MboxReceive
+ Purpose - Get a msg from a slot of the indicated mailbox.
+ Block the receiving process if no msg available.
+ Parameters - mailbox id, pointer to put data of msg, max # of bytes that
+ can be received.
+ Returns - actual size of msg if successful, -1 if invalid args.
+ Side Effects - none.
+ ----------------------------------------------------------------------- */
 int MboxReceive(int mbox_id, void *msg_ptr, int max_msg_size){
     // Checking for possible errors: inactive mailbox id, message size too large, etc.
     if(mbox_id < 0 || mbox_id >= MAXMBOX){
+        USLOSS_Console("MboxReceive(): mbox id (%d) out of bounds\n", mbox_id);
         return -1;
     }
     if(MailBoxTable[mbox_id].mboxID == -1){
+        USLOSS_Console("MboxReceive(): mboxid (%d) not valid\n", mbox_id);
         return -1;
     }
     
     // Check that there is a message in the mailbox
     if(MailBoxTable[mbox_id].mailSlotTable[0].mboxID == - 1){
-        // Block process
+        USLOSS_Console("MboxReceive(%d): no message in mailslot\n", mbox_id);
+       //** Block process
     }
     else{
         // Check that the message is not larger than max parameter
@@ -267,7 +277,7 @@ int MboxReceive(int mbox_id, void *msg_ptr, int max_msg_size){
             // Adjust the main SlotTable
             int index2 = slotTableIndex;
             for(int j = index2 + 1; j < totalActiveMailSlots; j++){
-                 MailslotTable[index2] = MailslotTable[j];
+                MailslotTable[index2] = MailslotTable[j];
                 index2++;
             }
             MailslotTable[index2].mboxID = -1;
@@ -283,15 +293,14 @@ int MboxReceive(int mbox_id, void *msg_ptr, int max_msg_size){
 } /* MboxReceive */
 
 /* ------------------------------------------------------------------------
-   Name - check_io
-   Purpose - Determine if there any processes blocked on any of the
-             interrupt mailboxes.
-   Returns - 1 if one (or more) processes are blocked; 0 otherwise
-   Side Effects - none.
-
-   Note: Do nothing with this function until you have successfully completed
-   work on the interrupt handlers and their associated mailboxes.
-   ------------------------------------------------------------------------ */
+ Name - check_io
+ Purpose - Determine if there any processes blocked on any of the
+ interrupt mailboxes.
+ Returns - 1 if one (or more) processes are blocked; 0 otherwise
+ Side Effects - none.
+ Note: Do nothing with this function until you have successfully completed
+ work on the interrupt handlers and their associated mailboxes.
+ ------------------------------------------------------------------------ */
 int check_io(void)
 {
     if (DEBUG2 && debugflag2)
