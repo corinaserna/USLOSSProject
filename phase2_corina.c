@@ -72,19 +72,14 @@ int start1(char *arg)
 
 // Helper Function
 void initMail(){
-    memset(MailBoxTable, -1, sizeof(Mailbox));
+    memset(MailBoxTable, -1, sizeof(MailBoxTable));
     int i;
-    for(i = 0; i < MAXMBOX; i++){
-        MailBoxTable[i].mboxID = -1;
-        //MailBoxTable[i].mboxTableIndex = -1;
-        MailBoxTable[i].totalMailSlots  = -1;
-        MailBoxTable[i].activeMailSlots = -1;
-        MailBoxTable[i].maxMessageSize  = -1;
-        MailBoxTable[i].blockedPID      = -1;
-        //MailBoxTable[i].mailSlotTable
-    }
+    for(i = 0; i < MAXMBOX; i++){   // already -1; just clear out pieces that need to be 0
+        MailBoxTable[i].totalMailSlots  = 0;
+        MailBoxTable[i].activeMailSlots = 0;
+     }
     
-    memset(MailslotTable, -1, sizeof(Mailslot));
+    memset(MailslotTable, -1, sizeof(MailslotTable));
     /*
      memset(MailSlotTable, -1, sizeof(Mailslot));
      int j;
@@ -95,6 +90,10 @@ void initMail(){
      MailSlotTable[j].msgSize = -1;
      //MailslotTable[j].msg
      }*/
+#if 0
+    for(i = 0; i < 10; i++)
+        USLOSS_Console("initMail %d\n", MailBoxTable[i].mboxID);
+#endif
 }
 
 
@@ -178,14 +177,23 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size){
     
     // A mailbox does exist, now check if there are mailslots
     if(MailBoxTable[mbox_id].totalMailSlots > 0){
-        // Check if there is an available mail slot
+        // Check if there is an available mail slot (if not, block)
+        if(MailBoxTable[mbox_id].totalMailSlots == MailBoxTable[mbox_id].activeMailSlots) {
+            USLOSS_Console("MboxSend(%d): mailbox full; blocking\n", mbox_id);
+            MailBoxTable[mbox_id].blockedPID = getpid();
+            USLOSS_Console("MboxSend(%d): blocking on pid %d\n", mbox_id, MailBoxTable[mbox_id].blockedPID);
+            blockMe(12);
+            
+            MailBoxTable[mbox_id].blockedPID = -1;  // reset after unblocked
+        }
         if((MailBoxTable[mbox_id].totalMailSlots - MailBoxTable[mbox_id].activeMailSlots) > 0){
             // Check that there are enough spaces in the overall mailslots table
             if(totalActiveMailSlots < MAXSLOTS){
 //                USLOSS_Console("MboxSend(%d): finding slots\n", mbox_id);
               // Find slot available in the mailslots table
-                int slotsTableIndex;
+                int slotsTableIndex = -1;
                 for(int i = 0; i < MAXSLOTS; i++){
+ //                   USLOSS_Console("MboxSend(%d): [%d]:%d\n", mbox_id, i, MailslotTable[i].mboxID);
                     if(MailslotTable[i].mboxID == -1){
                         slotsTableIndex = i;
                         break;
@@ -199,9 +207,9 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size){
                         break;
                     }
                 }
-//                USLOSS_Console("MboxSend(%d): slotsTableIndex:%d slotsTableIndex:%d\n", mbox_id, slotsTableIndex, slotsTableIndex);
+//               USLOSS_Console("MboxSend(%d): slotsTableIndex:%d slotsTableIndex:%d\n", mbox_id, slotsTableIndex, slotsTableIndex);
               // Check that the message size would fit into this mailbox slot
-                if(msg_size < MailBoxTable[mbox_id].maxMessageSize){
+                if(msg_size <= MailBoxTable[mbox_id].maxMessageSize){
                     // Create new mailslot
                     Mailslot *newSlot           = (Mailslot *)&MailBoxTable[mbox_id].mailSlotTable[mailboxSlotIndex];
                     newSlot->mboxID             = mbox_id;
@@ -223,12 +231,24 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size){
                     }
                     return 0;
                 }
+                else {
+                    USLOSS_Console("MboxSend(%d): msg %d > max %d\n", mbox_id, msg_size, MailBoxTable[mbox_id].maxMessageSize);
+                    return -1;
+                }
                 
             }
+            else {
+                USLOSS_Console("MboxSend(%d): too many slots %d > max %d\n", mbox_id, totalActiveMailSlots, MAXSLOTS);
+                return -1;
+            }
         }
+      }
+    else {
+        USLOSS_Console("MboxSend(%d): no allocated slots %d\n", mbox_id, MailBoxTable[mbox_id].totalMailSlots);
+        return -1;
     }
-    
-    return -1;
+   
+    return -111;     // should never get here
 } /* MboxSend */
 
 
@@ -301,6 +321,11 @@ int MboxReceive(int mbox_id, void *msg_ptr, int max_msg_size){
         //memset(MailslotTable[index2], -1, sizeof(Mailslot));
         totalActiveMailSlots--;
         
+        // now that that we've removed a message, check that a send wasn't blocked on a full mailbox
+        if (MailBoxTable[mbox_id].blockedPID != -1)
+        {
+            unblockProc(MailBoxTable[mbox_id].blockedPID);
+        }
         // Return size of message
         return MailBoxTable[mbox_id].mailSlotTable[0].msgSize;
     }
