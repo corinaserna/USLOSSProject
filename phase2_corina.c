@@ -21,9 +21,10 @@ int start1 (char *);
 #define MAX_QUEUE   (MAXMBOX*MAXSLOTS+1000)
 #define RESERVE_MAXBOX  7       // code seems to want to reserve the first 7
 
-// #define DEBUG1 1
+//#define DEBUG1 1
 
 #ifndef DEBUG1
+#warning "non-debug mode"
 #undef USLOSS_Console
 #define USLOSS_Console //
 #endif
@@ -31,16 +32,16 @@ int start1 (char *);
 
 int debugflag2 = 0;
 /* -----------------------------------------------------------
- There's 3 global queues -- one for Mailbox, one for Mailslot, and one to contain queue elements (the linked list elements of a queue).
+There's 3 global queues -- one for Mailbox, one for Mailslot, and one to contain queue elements (the linked list elements of a queue).
  
  For the MailBox_Q, the "val" points to an index into MailBoxTable
  For the Slot_Q, the "val" points to an index into MailslotTable
  ** To create the above 2 queues, nodes are popped off of elQ, then pushed to that (MailBox_Q,  Slot_Q) queue
  For the elQ (queue elements), the "val" points to an index into queueElementArray
- 
+
  Within the MailBox, there's two queues:
- blockedPID_Q -- queue of processes blocked on this mailbox.  "val2" is used for the saved pid
- mailSlot_Q   -- queue of mail slots "val" points to an index into MailslotTable
+    blockedPID_Q -- queue of processes blocked on this mailbox.  "val2" is used for the saved pid
+    mailSlot_Q   -- queue of mail slots "val" points to an index into MailslotTable
  
  When a create mailbox happens, a node is pulled from the MailBox_Q
  
@@ -54,9 +55,9 @@ int debugflag2 = 0;
  is pulled (popped) off, initialized and added (pushed) to the blockedPID_Q queue ("val2" contains the "pid")
  
  When a process is unblocked, the node is popped from the blockedPID_Q, pid extracted, then
- the node is returned (pushed) back to the global elements queue (elQ)
- 
- ----------------------------------------------------------- */
+the node is returned (pushed) back to the global elements queue (elQ)
+
+----------------------------------------------------------- */
 // the mail boxes
 Mailbox MailBoxTable[MAXMBOX];
 
@@ -70,7 +71,32 @@ QueueEl queueElementArray[MAX_QUEUE];
 Queue   elQ;
 Queue   MailBox_Q;
 Queue   Slot_Q;
+
+#define MAX_RELEASE_ARRAY 20
+static int sReleasedArray[MAX_RELEASE_ARRAY] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};   // could use stack, but too small to make a differnce??
 /* -------------------------- Helper Functions ----------------------------------- */
+
+// mboxID is always > -1
+void addReleaseArray(int mboxID, int count)
+{
+    int j = 0;
+    for (int i = 0; i < MAX_RELEASE_ARRAY && j < count; i++)
+        if (sReleasedArray[i] == -1) {
+            sReleasedArray[i] = mboxID;
+            j++;
+        }
+}
+
+int isReleased(int mboxID)  // only can check once
+{
+    for (int i = 0; i < MAX_RELEASE_ARRAY; i++)
+        if (sReleasedArray[i] == mboxID) {
+            sReleasedArray[i] = -1;
+            return 1;
+        }
+    return 0;
+}
+
 void push_elQ(QueueElPtr el)
 {
     pushQueue(&elQ, el);
@@ -120,7 +146,7 @@ QueueElPtr popQueue(QueuePtr thisQueue)
 void pushQueue(QueuePtr thisQueue, QueueElPtr newEl)
 {
     newEl->next = newEl->prev = NULL;
-    
+
     if (thisQueue->first == NULL && thisQueue->last == NULL) {
         thisQueue->first = thisQueue->last = newEl;
     }
@@ -193,10 +219,11 @@ void releaseMailBoxAndPush(MailboxPtr mailBox)
 {
     mailBox->mboxID             = -1;
     mailBox->totalMailSlots     = 0;
-    mailBox->isReleased         = 0;
+    mailBox->zeroSlotMsgSize    = 0;
+    memset(mailBox->zeroSlotMsg, 0, sizeof(mailBox->zeroSlotMsg));
     
     // Make sure that any queues in the Mailbox are released
-    // *** Does that leave any blocking processes deadlocked???
+// *** Does that leave any blocking processes deadlocked???
     release_Q(&mailBox->blockedPID_Q);
     release_Q(&mailBox->mailSlot_Q);
     push_MailBox_Q(mailBox->mailBoxQ_El);
@@ -247,7 +274,7 @@ void init_Slot_Q()
         slotEl                  = pop_elQ();
         slotEl->val             = &MailslotTable[i];
         MailslotTable[i].mboxID  = -1;
-        push_Slot_Q(slotEl);
+       push_Slot_Q(slotEl);
     }
 }
 
@@ -256,8 +283,8 @@ void init_Slot_Q()
 // ---------------------------------
 int pop_blockedPid_Q(MailboxPtr thisMailBox) {
     if (thisMailBox->blockedPID_Q.count == 0)  {
-        USLOSS_Console("pop_blockedPid_Q(): mailBox: %d popping exmpty blockPD\n", thisMailBox->mboxID);
-        return -1;
+        USLOSS_Console("pop_blockedPid_Q(): mailBox: %d/%d popping exmpty blockPD\n", thisMailBox->mboxID, getpid());
+       return -1;
     }
     
     QueueElPtr getQEl = popQueue(&thisMailBox->blockedPID_Q);
@@ -270,10 +297,10 @@ int pop_blockedPid_Q(MailboxPtr thisMailBox) {
 void push_blockedPid_Q(MailboxPtr thisMailBox, int pid) {
     QueueElPtr getQEl = pop_elQ();
     if (getQEl == 0)  {
-        USLOSS_Console("pop_blockedPid_Q(): mailBox: %d no more elements to push \n", thisMailBox->mboxID);
+        USLOSS_Console("pop_blockedPid_Q(): mailBox: %d/%d no more elements to push \n", thisMailBox->mboxID, getpid());
         return ;
     }
-    
+
     getQEl->val2 = pid;
     pushQueue(&thisMailBox->blockedPID_Q, getQEl);
 }
@@ -281,7 +308,7 @@ void push_blockedPid_Q(MailboxPtr thisMailBox, int pid) {
 void initMail(){
     
     init_elQ();
-    
+
     memset(MailBoxTable, 0, sizeof(MailBoxTable));
     memset(MailslotTable, 0, sizeof(MailslotTable));
     
@@ -333,19 +360,19 @@ int invalidMessageBox(const char *funcStr, int mbox_id, MailboxPtr mBox)
 {
     // Checking for possible errors: inactive mailbox id, message size too large, etc.
     if(mbox_id < RESERVE_MAXBOX || mbox_id >= MAXMBOX){
-        USLOSS_Console("%s(%d): bad message #\n", funcStr, mbox_id);
+        USLOSS_Console("%s(%d, %d): bad message #\n", funcStr, mbox_id, getpid());
         
         return -1;
     }
     
     if(mBox->mboxID == -1){
-        USLOSS_Console("%s(%d): message mailbox isn't valid\n", funcStr, mbox_id);
+        USLOSS_Console("%s(%d, %d): message mailbox isn't valid\n", funcStr, mbox_id, getpid());
         return -1;
     }
     
     if (isZapped())
     {
-        USLOSS_Console("%s(%d): Zapped; errpr\n", funcStr, mbox_id);
+        USLOSS_Console("%s(%d, %d): Zapped; errpr\n", funcStr, mbox_id, getpid());
         return -3;
     }
     return 0;
@@ -353,15 +380,19 @@ int invalidMessageBox(const char *funcStr, int mbox_id, MailboxPtr mBox)
 
 #define activeSlots mBox->mailSlot_Q.count
 
-void unBlockIfShould(MailboxPtr mBox)
+void unBlockIfShould(const char *funcDesc, MailboxPtr mBox)
 {
     // now that that we've removed a message, check that a send wasn't blocked on a full mailbox
     if (mBox->blockedPID_Q.count > 0)
     {
-        QueueElPtr firstSlot    = popQueue(&mBox->blockedPID_Q);
-        unblockProc(firstSlot->val2);
-        push_elQ(firstSlot);        // return to el Q
-    }
+        QueueElPtr firstSlot;
+        do {
+            firstSlot   = popQueue(&mBox->blockedPID_Q);
+            USLOSS_Console("%s(%d, %d): unblocking  %d\n", funcDesc, mBox->mboxID, getpid(), firstSlot->val2);
+            unblockProc(firstSlot->val2);
+            push_elQ(firstSlot);        // return to el Q
+        } while (mBox->blockedPID_Q.count > 0);
+     }
 }
 
 int recieveMsg(const char *funcDesc, MailboxPtr mBox, void *msg_ptr, int max_msg_size) {
@@ -377,7 +408,7 @@ int recieveMsg(const char *funcDesc, MailboxPtr mBox, void *msg_ptr, int max_msg
         returnVal = mSlot->msgSize;
     }
     else {  // return -1 for message too large
-        USLOSS_Console("%s(%d): message too large: %d > %d\n", funcDesc, mBox->mboxID, mSlot->msgSize, max_msg_size);
+        USLOSS_Console("%s(%d, %d): message too large: %d > %d\n", funcDesc, mBox->mboxID, getpid(), mSlot->msgSize, max_msg_size);
     }
     
     releaseMailSlotPush(mSlot);
@@ -387,12 +418,12 @@ int recieveMsg(const char *funcDesc, MailboxPtr mBox, void *msg_ptr, int max_msg
 int doSendMessage(const char *funcDesc, MailboxPtr mBox, void *msg_ptr, int msg_size) {
     MailslotPtr mSlot = pop_Slot_Q();
     if (mSlot == NULL) {
-        USLOSS_Console("%s(%d): no more total mail slots avaiable\n", funcDesc, mBox->mboxID);
+        USLOSS_Console("%s(%d, %d): no more total mail slots avaiable\n", funcDesc, mBox->mboxID, getpid());
         return -1;
     }
     
     if(msg_size > mBox->maxMessageSize) {
-        USLOSS_Console("MboxSend(%d): msg %d > max %d\n", mBox->mboxID, msg_size, mBox->maxMessageSize);
+        USLOSS_Console("%s(%d, %d): msg %d > max %d\n", funcDesc, mBox->mboxID, getpid(), msg_size, mBox->maxMessageSize);
         return -1;
     }
     
@@ -410,9 +441,10 @@ int doSendMessage(const char *funcDesc, MailboxPtr mBox, void *msg_ptr, int msg_
     }
     memcpy(mSlot->msg, msg_ptr, msg_size);
     pushQueue(&mBox->mailSlot_Q, mSlot->mailSlotQ_El);
+    USLOSS_Console("%s(%d, %d): message slot count: %d\n", funcDesc, mBox->mboxID, getpid(), mBox->mailSlot_Q.count);
     // now that that we've sent a message, check that a receive wasn't blocked on waiting
     // for a message
-    unBlockIfShould(mBox);
+    unBlockIfShould(funcDesc, mBox);
     
     return 0;
 }
@@ -426,26 +458,31 @@ int doSendMessage(const char *funcDesc, MailboxPtr mBox, void *msg_ptr, int msg_
  -1: the mailboxID is not a mailbox that is in use.
  0: successful completion.
  ----------------------------------------------------------------------- */
+
 int MboxRelease(int mbox_id)
 {
     MailboxPtr mBox = &MailBoxTable[mbox_id]; // account for #7 offset
     
+    USLOSS_Console("MboxRelease(%d, %d) start\n", mbox_id, getpid());
     int returnVal = invalidMessageBox("MboxRelease", mbox_id, mBox);
     if (returnVal != 0)
         return returnVal;
-    
-    mBox->isReleased         = 1;       // any processes waiting on a release shoudl return -3
-    
-    // unblock any processes waiting on this mailbox (they should return -3)
-    unBlockIfShould(mBox);
-    
+
+    if (mBox->blockedPID_Q.count) {  // need to ublock
+        addReleaseArray(mbox_id, mBox->blockedPID_Q.count);
+        USLOSS_Console("MboxRelease(%d, %d) # blocked mailbox: %d \n", mbox_id, getpid(), mBox->blockedPID_Q.count);
+
+        // unblock any processes waiting on this mailbox (they should return -3)
+        unBlockIfShould("MboxRelease", mBox);
+    }
+
     releaseMailBoxAndPush(mBox);
     return 0;
 }
 
 /* ------------------------------------------------------------------------
  Name - MboxCondSend
- 
+
  Conditionally send a message to a mailbox. Do not block the invoking process.
  If there is no empty slot in the mailbox in which to place the message, the value -2 is returned. Also return -2 in the case that all the mailbox slots in the system are used and none are available to allocate for this message.
  Return values:
@@ -459,27 +496,28 @@ int MboxCondSend(int mbox_id, void *msg_ptr, int msg_size)
 {
     MailboxPtr mBox = &MailBoxTable[mbox_id]; // account for #7 offset
     
+    USLOSS_Console("MboxCondSend(%d, %d) start: (%s)\n", mbox_id, getpid(), msg_ptr);
     int returnVal = invalidMessageBox("MboxSend", mbox_id, mBox);
     if (returnVal != 0)
         return returnVal;
-    
+
     if(msg_size > MAX_MESSAGE){
-        USLOSS_Console("MboxSend(%d): message size (%d) too large (%d)\n", mbox_id, msg_size, MAX_MESSAGE);
+        USLOSS_Console("MboxSend(%d, %d): message size (%d) too large (%d)\n", mbox_id, getpid(), msg_size, MAX_MESSAGE);
         return -1;
     }
     
     if(mBox->totalMailSlots <= 0){  // should never happen?
-        USLOSS_Console("MboxSend(%d): bad totalMailSlots (%d)\n", mbox_id, mBox->totalMailSlots);
+        USLOSS_Console("MboxSend(%d, %d): bad totalMailSlots (%d)\n", mbox_id, getpid(), mBox->totalMailSlots);
         return -1;
     }
-    
+
     // unlike regular send, if the mail box is full, return an error (-2)
     if(mBox->totalMailSlots == activeSlots) {
-        USLOSS_Console("MboxCondSend(%d): mailbox slots full; errpr\n", mbox_id);
+        USLOSS_Console("MboxCondSend(%d, %d): mailbox slots full; errpr\n", mbox_id, getpid());
         return -2;
     }
     if(Slot_Q.count == 0) {
-        USLOSS_Console("MboxCondSend(%d): global mail slots full; errpr\n", mbox_id);
+        USLOSS_Console("MboxCondSend(%d, %d): global mail slots full; errpr\n", mbox_id, getpid());
         return -2;
     }
     returnVal = doSendMessage("MboxSend", mBox, msg_ptr, msg_size);
@@ -487,8 +525,8 @@ int MboxCondSend(int mbox_id, void *msg_ptr, int msg_size)
 }
 
 /* ------------------------------------------------------------------------
- Name - MboxCondReceive
- 
+Name - MboxCondReceive
+
  Conditionally receive a message from a mailbox. Do not block the invoking process. If there is no message in the mailbox, the value -2 is returned.
  Return values:
  -3:    process has been zap’d.
@@ -500,12 +538,13 @@ int MboxCondReceive(int mbox_id, void *msg_ptr, int max_msg_size)
 {
     MailboxPtr mBox = &MailBoxTable[mbox_id]; // account for #7 offset
     
+    USLOSS_Console("MboxCondReceive(%d, %d) start\n", mbox_id, getpid());
     int returnVal = invalidMessageBox("MboxCondReceive", mbox_id, mBox);
     if (returnVal != 0)
         return returnVal;
-    
+
     if(mBox->mailSlot_Q.count == 0){
-        USLOSS_Console("MboxCondReceive(%d): mailbox empty; errpr\n", mbox_id);
+        USLOSS_Console("MboxCondReceive(%d, %d): mailbox empty; errpr\n", mbox_id, getpid());
         return -2;
     }
     
@@ -535,9 +574,19 @@ int MboxCreate(int slots, int slot_size)
     }
     // if here, unblocked??
     int mailBoxID = popMailBoxAndInit(slots, slot_size);
-    
+    USLOSS_Console("MboxCreate(%d, %d) mbox #Slots:%d  #max msg size:%d\n", mailBoxID, getpid(), slots, slot_size);
+
     return mailBoxID;
 } /* MboxCreate */
+
+void doBlock(const char *funcDesc, MailboxPtr mBox, int blockStatus)
+{
+    USLOSS_Console("%s(%d, %d): mailbox slots full; blocking\n", funcDesc, mBox->mboxID, getpid());
+    int thisPid = getpid();
+    push_blockedPid_Q(mBox, thisPid);
+    USLOSS_Console("MboxSend(%d, %d): blocking on pid %d\n", mBox->mboxID, getpid(), thisPid);
+    blockMe(blockStatus);
+}
 
 /* ------------------------------------------------------------------------
  Name - MboxSend
@@ -551,38 +600,67 @@ int MboxCreate(int slots, int slot_size)
 int MboxSend(int mbox_id, void *msg_ptr, int msg_size){
     MailboxPtr mBox = &MailBoxTable[mbox_id]; // account for #7 offset
     
+    USLOSS_Console("MboxSend(%d, %d) start: (%s)\n", mbox_id, getpid(), msg_ptr);
     int returnVal = invalidMessageBox("MboxSend", mbox_id, mBox);
     if (returnVal != 0)
         return returnVal;
     
     if(msg_size > MAX_MESSAGE){
-        USLOSS_Console("MboxSend(%d): message size (%d) too large (%d)\n", mbox_id, msg_size, MAX_MESSAGE);
+        USLOSS_Console("MboxSend(%d, %d): message size (%d) too large (%d)\n", mbox_id, getpid(), msg_size, MAX_MESSAGE);
         return -1;
     }
     
-    if(mBox->totalMailSlots <= 0){  // should never happen?
-        USLOSS_Console("MboxSend(%d): bad totalMailSlots (%d)\n", mbox_id, mBox->totalMailSlots);
-        return -1;
+    /*
+     3.3 Zero-slot Mailboxes
+     A mailbox can be created with zero slots. Zero-slot mailboxes require special handling. Such mailboxes are intended for synchronization between sender and receiver. Two cases:
+     a.) The sender will be blocked until a receiver collects the message;
+        OR
+     b.) the receiver will be blocked until a sender sends the message.
+     */
+    if(mBox->totalMailSlots == 0) {
+        USLOSS_Console("MboxSend(%d, %d): zero totalMailSlots (%d)\n", mbox_id, getpid(), mBox->totalMailSlots);
+        
+        if(msg_size > mBox->maxMessageSize) {
+            USLOSS_Console("MboxSend (zero slots)(%d, %d): msg %d > max %d\n", mBox->mboxID, getpid(), msg_size, mBox->maxMessageSize);
+            return -1;
+        }
+        mBox->zeroSlotMsgSize = msg_size;
+        memcpy(mBox->zeroSlotMsg, msg_ptr, msg_size);
+
+        if (mBox->blockedPID_Q.count > 0)   // receiver is waiting for this message
+            unBlockIfShould("MboxSend (zero)", mBox);
+        else    // block
+            doBlock("MboxSend (zero)", mBox, 12);
+
+        //Need to check that we were unblocked because the mailbox was released
+        // Can't use mBox->isReleased, as the variable setting doesn't propagate here
+        if (isReleased(mbox_id))
+        {
+            unBlockIfShould("MboxSend (zero)", mBox);
+            USLOSS_Console("MboxSend (zero) (%d, %d): mailbox has been released? -3\n", mbox_id, getpid());
+            return -3;
+        }
+
+        return 0;
     }
-    // A mailbox does exist, now check if there are mailslots
-    // Check if there is an available mail slot (if not, block)
-    if(mBox->totalMailSlots == activeSlots) {
-        USLOSS_Console("MboxSend(%d): mailbox slots full; blocking\n", mbox_id);
-        int thisPid = getpid();
-        push_blockedPid_Q(mBox, thisPid);
-        USLOSS_Console("MboxSend(%d): blocking on pid %d\n", mbox_id, thisPid);
-        blockMe(12);
-    }
-    
-    //Need to check that we were unblocked because the mailbox was released
-    if (mBox->isReleased == 1)
-    {
-        unBlockIfShould(mBox);
-        USLOSS_Console("MboxSend(%d): mailbox has been released? -3\n", mbox_id);
-        return -3;
-    }
-    
-    returnVal = doSendMessage("MboxSend", mBox, msg_ptr, msg_size);
+    else {
+       // A mailbox does exist, now check if there are mailslots
+        // Check if there is an available mail slot (if not, block)
+        if(mBox->totalMailSlots == activeSlots) {
+            doBlock("MboxSend", mBox, 12);
+        }
+        
+        //Need to check that we were unblocked because the mailbox was released
+        // Can't use mBox->isReleased, as the variable setting doesn't propagate here
+        if (isReleased(mbox_id))
+        {
+            unBlockIfShould("MboxSend", mBox);
+            USLOSS_Console("MboxSend(%d, %d): mailbox has been released? -3\n", mbox_id, getpid());
+            return -3;
+        }
+
+        returnVal = doSendMessage("MboxSend", mBox, msg_ptr, msg_size);
+        }
     return returnVal;     // should never get here
 } /* MboxSend */
 
@@ -599,39 +677,74 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size){
 int MboxReceive(int mbox_id, void *msg_ptr, int max_msg_size){
     MailboxPtr mBox = &MailBoxTable[mbox_id];
     
-    int returnVal = invalidMessageBox("MboxReceive", mbox_id, mBox);
+    USLOSS_Console("MboxReceive(%d, %d) start\n", mbox_id, getpid());
+   int returnVal = invalidMessageBox("MboxReceive", mbox_id, mBox);
     if (returnVal != 0)
         return returnVal;
     
-    // Check that there is a message in the mailbox
-    if(mBox->mailSlot_Q.count == 0){
-        USLOSS_Console("MboxReceive(%d): mailbox empty; blocking\n", mbox_id);
-        int thisPid = getpid();
-        push_blockedPid_Q(mBox, thisPid);
-        USLOSS_Console("MboxReceive(%d): blocking on pid %d\n", mbox_id, thisPid);
-        blockMe(12);
+    /*
+     3.3 Zero-slot Mailboxes
+     A mailbox can be created with zero slots. Zero-slot mailboxes require special handling. Such mailboxes are intended for synchronization between sender and receiver. Two cases:
+     a.) The sender will be blocked until a receiver collects the message;
+     OR
+     b.) the receiver will be blocked until a sender sends the message.
+     */
+    if(mBox->totalMailSlots == 0) {
+        USLOSS_Console("MboxReceive(%d, %d): zero totalMailSlots (%d)\n", mbox_id, getpid(), mBox->totalMailSlots);
+       
+        if (mBox->blockedPID_Q.count > 0)   // sender is waiting for this message
+            unBlockIfShould("MboxReceive (zero)", mBox);
+        else    // block
+            doBlock("MboxReceive (zero)", mBox, 11);
+
+        if (mBox->zeroSlotMsgSize < max_msg_size) {
+            USLOSS_Console("MboxReceive (zero)(%d, %d): message size (%d) too large (%d)\n", mbox_id, getpid(), max_msg_size, mBox->zeroSlotMsgSize);
+            return -1;
+        }
+       
+        memcpy(msg_ptr, mBox->zeroSlotMsg, mBox->zeroSlotMsgSize);
+        
+       //Need to check that we were unblocked because the mailbox was released
+        // Can't use mBox->isReleased, as the variable setting doesn't propagate here
+        if (isReleased(mbox_id))
+        {
+            unBlockIfShould("MboxReceive (zero)", mBox);
+            USLOSS_Console("MboxReceive (zero) (%d, %d): mailbox has been released? -3\n", mbox_id, getpid());
+            return -3;
+        }
+        
+        int zeroSlotMsgSize = mBox->zeroSlotMsgSize;
+        mBox->zeroSlotMsgSize = 0;      // reset
+
+        return zeroSlotMsgSize;
+   }
+    else {
+        // Check that there is a message in the mailbox
+        if(mBox->mailSlot_Q.count == 0){
+            doBlock("MboxReceive", mBox, 11);
+         }
+        
+        //Need to check that we were unblocked because the mailbox was released
+        if (isReleased(mbox_id))
+        {
+            unBlockIfShould("MboxReceive", mBox);
+            USLOSS_Console("MboxReceive(%d, %d): mailbox has been released? -3\n", mbox_id, getpid());
+            return -3;
+        }
+        returnVal = -1;
+        if (mBox->mailSlot_Q.count != 0)  {  // only reason to get here is because this mailbox was released????
+            returnVal = recieveMsg("MboxReceive", mBox, msg_ptr, max_msg_size);
+        }
+        else {  // return -1 for message too large
+            USLOSS_Console("MboxReceive(%d, %d): slots empty after block\n", mbox_id, getpid());
+        }
+
+        // now that that we've removed a message, check that a send wasn't blocked on a full mailbox
+        unBlockIfShould("MboxReceive", mBox);
+        // Return size of message
+        return returnVal;
     }
-    
-    //Need to check that we were unblocked because the mailbox was released
-    if (mBox->isReleased == 1)
-    {
-        unBlockIfShould(mBox);
-        USLOSS_Console("MboxReceive(%d): mailbox has been released? -3\n", mbox_id);
-        return -3;
-    }
-    returnVal = -1;
-    if (mBox->mailSlot_Q.count != 0)  {  // only reason to get here is because this mailbox was released????
-        returnVal = recieveMsg("MboxReceive", mBox, msg_ptr, max_msg_size);
-    }
-    else {  // return -1 for message too large
-        USLOSS_Console("MboxReceive(%d): slots empty after block\n", mbox_id);
-    }
-    
-    // now that that we've removed a message, check that a send wasn't blocked on a full mailbox
-    unBlockIfShould(mBox);
-    // Return size of message
-    return returnVal;
-} /* MboxReceive */
+ } /* MboxReceive */
 
 /* ------------------------------------------------------------------------
  Name - check_io
