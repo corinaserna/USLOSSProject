@@ -28,8 +28,9 @@ void pushQueue(QueuePtr thisQueue, QueueElPtr val);
 struct Mailbox {
     int         mboxID;
     int         index;
-   int          totalMailSlots;
+    int         totalMailSlots;
     int         maxMessageSize;
+    int         isReleased;
     QueueElPtr  mailBoxQ_El;           // queue element for this mailbox
     Queue		blockedPID_Q;
     Queue       mailSlot_Q;
@@ -58,3 +59,4 @@ union psrValues {
     struct psrBits bits;
     unsigned int integerPart;
 };
+
