@@ -30,7 +30,8 @@ struct Mailbox {
     int         index;
     int         totalMailSlots;
     int         maxMessageSize;
-    int         isReleased;
+    int         zeroSlotMsgSize;        // 0 if nothing pending
+    char        zeroSlotMsg[MAX_MESSAGE];
     QueueElPtr  mailBoxQ_El;           // queue element for this mailbox
     Queue		blockedPID_Q;
     Queue       mailSlot_Q;
@@ -59,4 +60,3 @@ union psrValues {
     struct psrBits bits;
     unsigned int integerPart;
 };
-
