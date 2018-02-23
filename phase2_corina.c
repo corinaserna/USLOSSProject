@@ -21,7 +21,7 @@ int start1 (char *);
 #define MAX_QUEUE   (MAXMBOX*MAXSLOTS+1000)
 #define RESERVE_MAXBOX  7       // code seems to want to reserve the first 7
 
-#define DEBUG1 1
+//#define DEBUG1 1
 
 #ifndef DEBUG1
 #warning "non-debug mode"
